@@ -238,10 +238,10 @@ export async function PATCH(request: Request) {
       message: `${updated.applicationNumber} assigned to ${verifier}${visit}`,
       application: updated,
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Failed to update application:", error);
     return NextResponse.json(
-      { success: false, error: "Failed to update application" },
+      { success: false, error: error?.message || "Failed to update application" },
       { status: 500 }
     );
   }
