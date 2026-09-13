@@ -1,13 +1,11 @@
 import { execSync } from "node:child_process";
 
 if (!process.env.DATABASE_URL || !process.env.DATABASE_URL.trim()) {
-  process.env.DATABASE_URL = "file:./dev.db";
+  delete process.env.DATABASE_URL;
 }
 if (!process.env.JWT_SECRET || !process.env.JWT_SECRET.trim()) {
   process.env.JWT_SECRET = "sih26036-legal-metrology-hmac-secret-key-2026";
 }
-
-console.log("[vercel-build] DATABASE_URL is set to:", process.env.DATABASE_URL);
 
 try {
   console.log("[vercel-build] 1. Generating Prisma client...");

@@ -1,7 +1,7 @@
 import { execSync } from "node:child_process";
 
 if (!process.env.DATABASE_URL || !process.env.DATABASE_URL.trim()) {
-  process.env.DATABASE_URL = "file:./dev.db";
+  delete process.env.DATABASE_URL;
 }
 
 try {
