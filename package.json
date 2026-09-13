@@ -5,10 +5,10 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "vercel-build": "prisma generate && prisma db push && prisma db seed && next build",
+    "vercel-build": "node scripts/vercel-build.mjs",
     "start": "next start",
     "lint": "eslint",
-    "postinstall": "prisma generate",
+    "postinstall": "node scripts/postinstall.mjs",
     "test": "tsx --test tests/*.test.ts",
     "db:push": "prisma db push",
     "db:seed": "prisma db seed",
