@@ -64,15 +64,21 @@ export default function LoginForm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const data = await res.json();
+      let data: any;
+      try {
+        data = await res.json();
+      } catch {
+        setError(`Server returned status ${res.status}. Please check server logs.`);
+        return;
+      }
       if (!res.ok || !data.success) {
         setError(data.error || "Sign-in failed");
         return;
       }
       router.push(next);
       router.refresh();
-    } catch {
-      setError("Network error — please try again");
+    } catch (err: any) {
+      setError(err?.message || "Network error — please try again");
     } finally {
       setLoading(false);
     }
