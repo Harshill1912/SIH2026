@@ -1,0 +1,196 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Business {
+  id           String        @id @default(uuid())
+  name         String
+  regNo        String        @unique
+  address      String
+  contact      String
+  /// Registered premises. The integrity check compares each inspection's
+  /// geotag against this; null skips that check rather than guessing.
+  lat          Float?
+  lng          Float?
+  createdAt    DateTime      @default(now())
+  instruments  Instrument[]
+  applications Application[]
+  users        User[]
+  reminders    Reminder[]
+}
+
+/// One expiry notice sent (or simulated) to a business about a certificate.
+/// AUTO rows are written by the reminder job once per (certificate, threshold);
+/// MANUAL rows are written when HQ presses "Send reminder".
+model Reminder {
+  id            String      @id @default(uuid())
+  certificateId String
+  certificate   Certificate @relation(fields: [certificateId], references: [id], onDelete: Cascade)
+  businessId    String
+  business      Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  threshold     String      // D30 | D15 | D7 | EXPIRED
+  trigger       String      // AUTO | MANUAL
+  channel       String      // SMS | EMAIL
+  recipient     String
+  message       String
+  sentAt        DateTime    @default(now())
+
+  @@index([certificateId, threshold, trigger])
+  @@index([businessId, sentAt])
+}
+
+model User {
+  id                   String        @id @default(uuid())
+  name                 String
+  email                String        @unique
+  role                 String        // ADMIN, OFFICER, GATC, BUSINESS
+  badgeNumber          String?
+  /// scrypt hash, "salt:hex". Null = account cannot sign in (legacy seed rows).
+  passwordHash         String?
+  /// Set for BUSINESS users — the enterprise this account acts for.
+  businessId           String?
+  business             Business?     @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  /// Set for GATC users — the notified test centre this account acts for.
+  testCentreId         String?
+  testCentre           TestCentre?   @relation(fields: [testCentreId], references: [id], onDelete: SetNull)
+  createdAt            DateTime      @default(now())
+  assignedApplications Application[]
+  inspections          Inspection[]
+}
+
+/// A Government Approved Test Centre, notified under the Legal Metrology Act
+/// to carry out verification alongside departmental officers.
+model TestCentre {
+  id           String        @id @default(uuid())
+  name         String
+  /// Government notification number under which the centre is approved.
+  notifyNo     String        @unique
+  address      String
+  contact      String
+  /// Instrument categories the centre is notified to verify (JSON string array).
+  categories   String        @default("[]")
+  createdAt    DateTime      @default(now())
+  users        User[]
+  applications Application[]
+}
+
+model Instrument {
+  id           String        @id @default(uuid())
+  serialNumber String        @unique
+  category     String
+  model        String
+  capacity     String
+  location     String
+  businessId   String
+  business     Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  applications Application[]
+  certificates Certificate[]
+  reports      Report[]
+  createdAt    DateTime      @default(now())
+}
+
+/// A citizen's complaint about an instrument: no sticker on the scale, a lapsed
+/// one, a damaged QR, or a suspected short weight. Filed from the public
+/// verification page, so it needs no account — which is the whole point.
+model Report {
+  id            String       @id @default(uuid())
+  /// NO_STICKER | EXPIRED | DAMAGED | SHORT_WEIGHT | OTHER
+  kind          String
+  note          String?
+  /// Where the reporter says they saw it, in their own words. They will often
+  /// not know the trader's registration number, so this is free text.
+  placeText     String?
+  /// Present when the report was raised from a scanned certificate.
+  certificateId String?
+  certificate   Certificate? @relation(fields: [certificateId], references: [id], onDelete: SetNull)
+  instrumentId  String?
+  instrument    Instrument?  @relation(fields: [instrumentId], references: [id], onDelete: SetNull)
+  /// Optional — a citizen may report anonymously.
+  contact       String?
+  status        String       @default("OPEN") // OPEN | ACTIONED | CLOSED
+  createdAt     DateTime     @default(now())
+
+  @@index([status, createdAt])
+}
+
+model Application {
+  id                String       @id @default(uuid())
+  applicationNumber String       @unique
+  status            String       @default("SUBMITTED") // SUBMITTED, ASSIGNED, INSPECTED, REJECTED
+  instrumentId      String
+  instrument        Instrument   @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+  businessId        String
+  business          Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  assignedOfficerId String?
+  assignedOfficer   User?        @relation(fields: [assignedOfficerId], references: [id])
+  /// Set when HQ dispatches the job to a GATC rather than a departmental officer.
+  assignedCentreId  String?
+  assignedCentre    TestCentre?  @relation(fields: [assignedCentreId], references: [id])
+  /// Planned site visit, set by HQ at assignment. Local 10:00 = morning slot,
+  /// 14:00 = afternoon slot.
+  scheduledFor      DateTime?
+  inspection        Inspection?
+  certificate       Certificate?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+}
+
+model Inspection {
+  id             String      @id @default(uuid())
+  applicationId  String      @unique
+  application    Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  officerId      String
+  officer        User        @relation(fields: [officerId], references: [id])
+  result         String      // PASS, FAIL
+  notes          String?
+  photoAttached  Boolean     @default(false)
+  /// Compressed JPEG data URL captured on site (≈100–300 KB). Served via
+  /// /api/inspections/[id]/photo so list endpoints never carry it.
+  photoData      String?
+  /// SHA-256 of photoData, so a seal photo reused across cases can be found
+  /// without loading every image.
+  photoHash      String?
+  photoName      String?
+  /// Human-readable geotag, e.g. "28.63280° N, 77.21970° E (±12 m)".
+  gpsCoordinates String?
+  gpsLat         Float?
+  gpsLng         Float?
+  gpsAccuracyM   Float?
+  /// Structured calibration record: JSON array of
+  /// { nominalG, observedG, errorG, mpeG, pass } rows. Empty string = none.
+  testWeights    String      @default("")
+  /// Maximum Permissible Error applied, in grams, and the verdict the rows imply.
+  mpeVerdict     String?     // PASS | FAIL | null when no rows were entered
+  inspectedAt    DateTime    @default(now())
+
+  @@index([photoHash])
+}
+
+model Certificate {
+  id            String      @id @default(uuid())
+  certNumber    String      @unique
+  token         String
+  validFrom     DateTime
+  validTill     DateTime
+  qrCode        String
+  instrumentId  String
+  instrument    Instrument  @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+  applicationId String      @unique
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  reminders     Reminder[]
+  reports       Report[]
+  /// Set when a certificate is voided before its expiry — e.g. the instrument
+  /// was found tampered with after issue. The signature stays valid forever, so
+  /// revocation is the only way to withdraw trust early.
+  revokedAt     DateTime?
+  revokedReason String?
+  revokedById   String?
+  createdAt     DateTime    @default(now())
+
+  @@index([revokedAt])
+}
