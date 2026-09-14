@@ -4,7 +4,14 @@ import prisma from "@/lib/prisma";
 import jwt from "jsonwebtoken";
 import QRCode from "qrcode";
 import { requireSession } from "@/lib/auth";
-import { divisionFromCapacity, evaluateAll, verdictFor, type TestWeightRow } from "@/lib/mpe";
+import {
+  divisionFromCapacity,
+  evaluateRecord,
+  maxFromCapacity,
+  measureFor,
+  recordVerdict,
+  type TestPoint,
+} from "@/lib/mpe";
 
 const JWT_SECRET = process.env.JWT_SECRET || "sih26036-legal-metrology-hmac-secret-key-2026";
 
@@ -84,28 +91,67 @@ export async function POST(request: Request) {
     // Re-evaluate the calibration rows server-side: the client may compute the
     // verdict for its own display, but what is stored (and signed into the
     // certificate) must be derived from the readings here.
+    //
+    // The measure (mass / volume / length) comes from the instrument on record,
+    // never from the request, so a client cannot test a fuel pump against a
+    // scale's limits. Accepts the current record object or the legacy row array.
     let storedWeights = "";
     let mpeVerdict: "PASS" | "FAIL" | null = null;
+    let testPoints = 0;
     if (typeof testWeights === "string" && testWeights.length > 0) {
-      const divisionG = divisionFromCapacity(application.instrument.capacity);
-      let parsed: TestWeightRow[] = [];
+      const { category, capacity } = application.instrument;
+      const measure = measureFor(category, capacity);
+      let points: TestPoint[] = [];
+      let sentDivision: number | null = null;
       try {
         const raw = JSON.parse(testWeights);
-        parsed = Array.isArray(raw)
-          ? raw
-              .map((r) => ({ nominalG: Number(r?.nominalG), observedG: Number(r?.observedG) }))
-              .filter((r) => Number.isFinite(r.nominalG) && Number.isFinite(r.observedG) && r.nominalG > 0)
-          : [];
+        const list: unknown[] = Array.isArray(raw) ? raw : Array.isArray(raw?.points) ? raw.points : [];
+        points = list
+          .map((r) => {
+            const o = (r ?? {}) as Record<string, unknown>;
+            return { nominal: Number(o.nominal ?? o.nominalG), observed: Number(o.observed ?? o.observedG) };
+          })
+          .filter((p) => Number.isFinite(p.nominal) && Number.isFinite(p.observed) && p.nominal > 0 && p.observed >= 0);
+        if (!Array.isArray(raw) && raw?.divisionG != null) sentDivision = Number(raw.divisionG);
       } catch {
         return NextResponse.json({ success: false, error: "Malformed calibration record" }, { status: 400 });
       }
-      if (parsed.length > 40) {
+      if (points.length > 40) {
         return NextResponse.json({ success: false, error: "Too many calibration rows" }, { status: 400 });
       }
-      if (divisionG != null && parsed.length > 0) {
-        const evaluated = evaluateAll(parsed, divisionG);
-        storedWeights = JSON.stringify(evaluated);
-        mpeVerdict = verdictFor(evaluated);
+
+      const max = maxFromCapacity(capacity, measure);
+      if (max != null && points.some((p) => p.nominal > max * 1.0001)) {
+        return NextResponse.json(
+          { success: false, error: `A test standard exceeds the instrument's capacity (${capacity})` },
+          { status: 400 }
+        );
+      }
+
+      // Scale interval: the capacity on record wins. Only when it states none
+      // (e.g. "60 Metric Tonnes") is the checker's reading of the data plate used.
+      let divisionG = measure === "mass" ? divisionFromCapacity(capacity) : null;
+      if (measure === "mass" && divisionG == null && sentDivision != null) {
+        if (!Number.isFinite(sentDivision) || sentDivision <= 0 || (max != null && sentDivision > max / 100)) {
+          return NextResponse.json(
+            { success: false, error: "The scale interval (e) entered is not plausible for this instrument" },
+            { status: 400 }
+          );
+        }
+        divisionG = sentDivision;
+      }
+
+      if (points.length > 0) {
+        const record = evaluateRecord(measure, points, divisionG);
+        if (!record) {
+          return NextResponse.json(
+            { success: false, error: "Enter the instrument's scale interval (e) to evaluate the readings" },
+            { status: 400 }
+          );
+        }
+        storedWeights = JSON.stringify(record);
+        mpeVerdict = recordVerdict(record);
+        testPoints = record.points.length;
       }
     }
 
@@ -164,7 +210,7 @@ export async function POST(request: Request) {
         badgeNumber: application.assignedOfficer?.badgeNumber ?? auth.user.badgeNumber ?? "",
         gps: inspection.gpsCoordinates ?? undefined,
         mpe: mpeVerdict ?? undefined,
-        testPoints: storedWeights ? JSON.parse(storedWeights).length : undefined,
+        testPoints: testPoints || undefined,
         issuedAt: validFrom.toISOString(),
       };
 

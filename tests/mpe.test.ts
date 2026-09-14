@@ -9,6 +9,17 @@ import {
   parseTestWeights,
   formatError,
   formatMass,
+  measureFor,
+  maxFromCapacity,
+  volumeMpeMl,
+  lengthMpeMm,
+  evaluateRecord,
+  recordVerdict,
+  parseTestRecord,
+  formatQuantity,
+  formatReading,
+  formatSignedQuantity,
+  formatLimit,
 } from "../src/lib/mpe";
 
 /*
@@ -116,4 +127,78 @@ test("errors are formatted with a visible direction", () => {
   assert.equal(formatError(0), "±0 g");
   assert.equal(formatMass(20000), "20 kg");
   assert.equal(formatMass(500), "500 g");
+});
+
+// ── every instrument type ────────────────────────────────────────────────
+
+test("each registered category is tested against the right quantity", () => {
+  assert.equal(measureFor("Electronic Counter Scale", "30 kg / 1 g"), "mass");
+  assert.equal(measureFor("Platform Scale (Industrial)", "300 kg / 50 g"), "mass");
+  assert.equal(measureFor("Weighbridge (Heavy Vehicle)", "60 Metric Tonnes"), "mass");
+  assert.equal(measureFor("Automatic Gravimetric Filling", "5 kg / 2 g"), "mass");
+  assert.equal(measureFor("Fuel Dispenser (Petrol/Diesel)", "45 L/min"), "volume");
+  assert.equal(measureFor("Commercial Length & Linear Measure", "30 m"), "length");
+});
+
+test("maximum capacity is read in canonical units, and a flow rate is not a capacity", () => {
+  assert.equal(maxFromCapacity("30 kg / 1 g", "mass"), 30_000);
+  assert.equal(maxFromCapacity("60 Metric Tonnes", "mass"), 60_000_000);
+  assert.equal(maxFromCapacity("500 mg / 1 mg", "mass"), 0.5);
+  assert.equal(maxFromCapacity("45 L/min", "volume"), null);
+  assert.equal(maxFromCapacity("20 L", "volume"), 20_000);
+  assert.equal(maxFromCapacity("30 m", "length"), 30_000);
+});
+
+test("fuel dispensers: ±0.5% — ±25 mL on the 5 L test measure", () => {
+  assert.equal(volumeMpeMl(5000), 25);
+  assert.equal(volumeMpeMl(20000), 100);
+  const rec = evaluateRecord("volume", [
+    { nominal: 5000, observed: 4980 }, // 20 mL short: within
+    { nominal: 5000, observed: 4970 }, // 30 mL short: the customer is cheated
+  ])!;
+  assert.deepEqual(rec.points.map((p) => [p.error, p.pass]), [[-20, true], [-30, false]]);
+  assert.equal(recordVerdict(rec), "FAIL");
+  assert.equal(formatSignedQuantity(-30, "volume"), "−30 mL");
+  assert.equal(formatReading(4980, "volume"), "4.98 L");
+});
+
+test("the limit edge is inclusive for volume, as it is for mass", () => {
+  const rec = evaluateRecord("volume", [{ nominal: 5000, observed: 5025 }])!;
+  assert.equal(rec.points[0].pass, true);
+});
+
+test("length measures: ±(0.3 + 0.2·L) mm, L rounded up to whole metres", () => {
+  assert.equal(lengthMpeMm(500), 0.5); // under 1 m counts as 1 m
+  assert.equal(lengthMpeMm(1000), 0.5);
+  assert.equal(lengthMpeMm(1001), 0.7);
+  assert.equal(lengthMpeMm(30000), 6.3);
+  const rec = evaluateRecord("length", [{ nominal: 30000, observed: 30006 }, { nominal: 1000, observed: 1000.6 }])!;
+  assert.deepEqual(rec.points.map((p) => p.pass), [true, false]);
+});
+
+test("a weighbridge is evaluated once the checker supplies e from the data plate", () => {
+  assert.equal(evaluateRecord("mass", [{ nominal: 10_000_000, observed: 10_008_000 }], null), null);
+  // e = 20 kg; 10 t = 500 e → ±0.5 e = ±10 kg.
+  const rec = evaluateRecord("mass", [{ nominal: 10_000_000, observed: 10_008_000 }], 20_000)!;
+  assert.equal(rec.divisionG, 20_000);
+  assert.equal(rec.points[0].mpe, 10_000);
+  assert.equal(rec.points[0].pass, true);
+  assert.equal(formatQuantity(10_000_000, "mass"), "10 t");
+  assert.equal(formatSignedQuantity(8000, "mass"), "+8 kg");
+  assert.equal(formatLimit(10_000, "mass"), "± 10 kg");
+});
+
+test("stored records parse in both the new and the legacy format", () => {
+  const legacy = evaluateAll([{ nominalG: 500, observedG: 500.3 }], 1);
+  const fromLegacy = parseTestRecord(JSON.stringify(legacy))!;
+  assert.equal(fromLegacy.measure, "mass");
+  assert.equal(fromLegacy.points[0].error, 0.3);
+
+  const volume = evaluateRecord("volume", [{ nominal: 5000, observed: 4990 }]);
+  assert.deepEqual(parseTestRecord(JSON.stringify(volume)), volume);
+  // A volume record has no mass rows — the mass-only reader returns none.
+  assert.deepEqual(parseTestWeights(JSON.stringify(volume)), []);
+  assert.equal(parseTestRecord('{"measure":"time","points":[]}'), null);
+  assert.equal(parseTestRecord("{"), null);
+  assert.equal(recordVerdict(null), null);
 });

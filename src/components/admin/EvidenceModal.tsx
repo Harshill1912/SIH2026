@@ -3,7 +3,14 @@
 import React from "react";
 import { Camera, MapPin, ExternalLink, ImageOff, ShieldCheck, Scale } from "lucide-react";
 import { mapsUrl } from "@/lib/geo";
-import { formatError, formatMass, parseTestWeights } from "@/lib/mpe";
+import {
+  MEASURE_STANDARD,
+  formatLimit,
+  formatQuantity,
+  formatReading,
+  formatSignedQuantity,
+  parseTestRecord,
+} from "@/lib/mpe";
 import { Badge, KV, Modal, Mono, cx } from "@/components/ui";
 
 export interface EvidenceInspection {
@@ -40,7 +47,9 @@ export default function EvidenceModal({
 }) {
   if (!inspection) return null;
   const hasGeo = inspection.gpsLat != null && inspection.gpsLng != null;
-  const rows = parseTestWeights(inspection.testWeights);
+  const record = parseTestRecord(inspection.testWeights);
+  const rows = record?.points ?? [];
+  const measure = record?.measure ?? "mass";
 
   return (
     <Modal
@@ -95,6 +104,7 @@ export default function EvidenceModal({
             <div className="flex items-center gap-2">
               <Scale className="h-4 w-4 text-ink-400" />
               <span className="eyebrow">Calibration record</span>
+              {record && <span className="text-xs text-ink-400">{MEASURE_STANDARD[measure]}</span>}
             </div>
             {inspection.mpeVerdict && (
               <Badge tone={inspection.mpeVerdict === "PASS" ? "good" : "bad"} dot>
@@ -104,7 +114,7 @@ export default function EvidenceModal({
           </div>
           {rows.length === 0 ? (
             <div className="rounded-xl border border-dashed border-line-strong p-4 text-[13px] text-ink-500">
-              No standard-weight table was recorded for this inspection.
+              No calibration readings were recorded for this inspection.
             </div>
           ) : (
             <div className="overflow-hidden rounded-xl border border-line">
@@ -121,12 +131,12 @@ export default function EvidenceModal({
                 <tbody className="divide-y divide-line">
                   {rows.map((r, i) => (
                     <tr key={i} className={cx(!r.pass && "bg-rose-50/50")}>
-                      <td className="px-3 py-2 font-mono text-ink-900">{formatMass(r.nominalG)}</td>
-                      <td className="px-3 py-2 text-right font-mono text-ink-700">{r.observedG} g</td>
+                      <td className="px-3 py-2 font-mono text-ink-900">{formatQuantity(r.nominal, measure)}</td>
+                      <td className="px-3 py-2 text-right font-mono text-ink-700">{formatReading(r.observed, measure)}</td>
                       <td className={cx("px-3 py-2 text-right font-mono", r.pass ? "text-ink-700" : "font-semibold text-rose-700")}>
-                        {formatError(r.errorG)}
+                        {formatSignedQuantity(r.error, measure)}
                       </td>
-                      <td className="px-3 py-2 text-right font-mono text-ink-500">± {r.mpeG} g</td>
+                      <td className="px-3 py-2 text-right font-mono text-ink-500">{formatLimit(r.mpe, measure)}</td>
                       <td className="px-3 py-2 text-center">
                         <Badge tone={r.pass ? "good" : "bad"}>{r.pass ? "Within" : "Outside"}</Badge>
                       </td>

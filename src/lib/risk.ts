@@ -1,5 +1,5 @@
 import { distanceM } from "./geo";
-import { divisionFromCapacity, evaluateAll, type TestWeightRow } from "./mpe";
+import { divisionFromCapacity, evaluateAll, type EvaluatedPoint, type TestWeightRow } from "./mpe";
 
 /**
  * Enforcement intelligence: which instruments to look at first, and which
@@ -24,6 +24,12 @@ export interface RiskInput {
   capacity: string;
   /** Readings from the most recent inspection; empty if none were recorded. */
   lastReadings: TestWeightRow[];
+  /**
+   * Server-evaluated points from the most recent inspection, any measure. When
+   * present they are used as stored — they carry the limits the verdict was
+   * signed against, including a scale interval the checker read off the plate.
+   */
+  lastPoints?: EvaluatedPoint[] | null;
   /** Earlier FAIL verdicts for this instrument. */
   failCount: number;
   /** Days until the current certificate lapses; negative once lapsed; null if never certified. */
@@ -73,6 +79,12 @@ export function driftRatio(capacity: string, readings: TestWeightRow[]): number 
   return Math.max(...rows.map((r) => Math.abs(r.errorG) / r.mpeG));
 }
 
+/** Worst |error| / MPE across already-evaluated points, or null with none. */
+export function pointsDrift(points: EvaluatedPoint[]): number | null {
+  const usable = points.filter((p) => p.mpe > 0);
+  return usable.length ? Math.max(...usable.map((p) => Math.abs(p.error) / p.mpe)) : null;
+}
+
 export function scoreInstrument(input: RiskInput): RiskResult {
   const factors: RiskFactor[] = [];
   const add = (key: RiskFactor["key"], points: number, label: string) => {
@@ -81,7 +93,9 @@ export function scoreInstrument(input: RiskInput): RiskResult {
 
   // Drift: the strongest early signal. A scale that read at 90% of its limit
   // last year is the one most likely to be outside it this year.
-  const drift = driftRatio(input.capacity, input.lastReadings);
+  const drift = input.lastPoints?.length
+    ? pointsDrift(input.lastPoints)
+    : driftRatio(input.capacity, input.lastReadings);
   if (drift != null) {
     const pct = Math.round(drift * 100);
     if (drift > 1) add("DRIFT", 40, `Last reading was outside its limit (${pct}% of MPE)`);
@@ -131,6 +145,8 @@ export interface IntegrityInput {
   premises: { lat: number; lng: number } | null;
   /** Other inspections whose seal photo has byte-identical content. */
   photoSharedWith: string[];
+  /** Server-evaluated points, any measure; preferred over re-deriving from `readings`. */
+  points?: EvaluatedPoint[] | null;
 }
 
 export type FlagSeverity = "high" | "medium";
@@ -173,15 +189,17 @@ export function integrityFlags(input: IntegrityInput): IntegrityFlag[] {
   // Real instruments carry some error. Three or more readings that all land
   // exactly on the nominal value is what a copied or invented record looks like.
   const e = divisionFromCapacity(input.capacity);
-  if (e != null && input.readings.length >= 3) {
-    const rows = evaluateAll(input.readings, e);
-    if (rows.every((r) => r.errorG === 0)) {
-      flags.push({
-        key: "PERFECT_READINGS",
-        severity: "medium",
-        label: `All ${rows.length} readings exactly on the nominal value`,
-      });
-    }
+  const errors = input.points?.length
+    ? input.points.map((p) => p.error)
+    : e != null
+      ? evaluateAll(input.readings, e).map((r) => r.errorG)
+      : [];
+  if (errors.length >= 3 && errors.every((err) => err === 0)) {
+    flags.push({
+      key: "PERFECT_READINGS",
+      severity: "medium",
+      label: `All ${errors.length} readings exactly on the nominal value`,
+    });
   }
 
   const rank = { high: 0, medium: 1 };

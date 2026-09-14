@@ -1,75 +1,253 @@
 "use client";
 
-import React from "react";
-import { Plus, Trash2, Scale, AlertTriangle, CheckCircle2 } from "lucide-react";
+import React, { useState } from "react";
+import { Plus, Trash2, AlertTriangle, CheckCircle2, Info } from "lucide-react";
 import {
+  MEASURE_STANDARD,
   STANDARD_WEIGHTS_G,
   divisionFromCapacity,
-  evaluateAll,
-  formatError,
-  formatMass,
-  verdictFor,
-  type TestWeightRow,
+  evaluateRecord,
+  formatLimit,
+  formatQuantity,
+  formatSignedQuantity,
+  maxFromCapacity,
+  measureFor,
+  recordVerdict,
+  type Measure,
+  type TestPoint,
+  type TestRecord,
 } from "@/lib/mpe";
 import { Badge, Label, cx } from "@/components/ui";
 
+/** What the checker has entered so far, in canonical units (g, mL, mm). */
+export interface TestDraft {
+  /** Mass only: e in grams, read off the data plate when the capacity doesn't state it. */
+  divisionG: number | null;
+  points: TestPoint[];
+}
+
+export const EMPTY_DRAFT: TestDraft = { divisionG: null, points: [] };
+
 /**
- * The calibration record: standard weights applied, what the instrument read,
- * and whether each row sits inside the Maximum Permissible Error for that load.
- * The verdict is computed, not typed, so the PASS/FAIL decision is defensible.
+ * The record as it will be evaluated — used by the form for display and by the
+ * payload builder, so what the checker sees is what gets sent. The server
+ * evaluates it again from the raw points before anything is stored or signed.
+ */
+export function draftToRecord(category: string, capacity: string, draft: TestDraft): TestRecord | null {
+  const measure = measureFor(category, capacity);
+  const e = measure === "mass" ? divisionFromCapacity(capacity) ?? draft.divisionG : null;
+  return evaluateRecord(measure, draft.points, e);
+}
+
+interface UnitOption {
+  label: string;
+  factor: number;
+}
+
+const UNITS: Record<Measure, UnitOption[]> = {
+  mass: [
+    { label: "g", factor: 1 },
+    { label: "kg", factor: 1000 },
+    { label: "t", factor: 1_000_000 },
+  ],
+  volume: [
+    { label: "mL", factor: 1 },
+    { label: "L", factor: 1000 },
+  ],
+  length: [
+    { label: "mm", factor: 1 },
+    { label: "cm", factor: 10 },
+    { label: "m", factor: 1000 },
+  ],
+};
+
+const COPY: Record<Measure, { title: string; standard: string; reading: string; add: string; notes: string }> = {
+  mass: {
+    title: "Calibration record — standard weights",
+    standard: "Standard weight",
+    reading: "Instrument reading",
+    add: "Add the weights you applied:",
+    notes: "weights",
+  },
+  volume: {
+    title: "Calibration record — standard measure",
+    standard: "Measure dispensed",
+    reading: "Measured in the can",
+    add: "Add the measures you filled:",
+    notes: "measures",
+  },
+  length: {
+    title: "Calibration record — reference lengths",
+    standard: "Reference length",
+    reading: "Measured length",
+    add: "Add the reference lengths you checked:",
+    notes: "lengths",
+  },
+};
+
+const NICE_MASS_G = [
+  100, 200, 500, 1e3, 2e3, 5e3, 1e4, 2e4, 5e4, 1e5, 2e5, 5e5,
+  1e6, 2e6, 5e6, 1e7, 2e7, 3e7, 4e7, 5e7, 6e7, 8e7, 1e8,
+];
+
+/** Test points a checker would typically apply, sized to the instrument. */
+function presetsFor(measure: Measure, max: number | null): number[] {
+  if (measure === "volume") {
+    const all = [1000, 2000, 5000, 10000, 20000];
+    return max ? all.filter((v) => v <= max) : all;
+  }
+  if (measure === "length") {
+    const all = [100, 500, 1000, 2000, 5000, 10000, 20000, 30000, 50000];
+    return max ? all.filter((v) => v <= max) : [500, 1000, 2000, 5000];
+  }
+  if (!max) return STANDARD_WEIGHTS_G;
+  // Across the range up to full load: the five largest round values, plus max itself.
+  const picks = NICE_MASS_G.filter((v) => v <= max).slice(-5);
+  if (!picks.includes(max)) picks.push(max);
+  return picks.sort((a, b) => a - b);
+}
+
+/** The unit readings are typed in: tonnes-scale instruments read in kg, fuel in litres. */
+function entryUnit(measure: Measure, max: number | null): UnitOption {
+  if (measure === "volume") return UNITS.volume[1];
+  if (measure === "mass" && max != null && max >= 1_000_000) return UNITS.mass[1];
+  return UNITS[measure][0];
+}
+
+const roundTo = (n: number, dp = 6) => Math.round(n * 10 ** dp) / 10 ** dp;
+
+/**
+ * The checker's test record. Adapts to what is being verified: standard weights
+ * on a scale or weighbridge, a standard measure at a fuel dispenser, reference
+ * lengths for a length measure. Each row shows its error and limit as it is
+ * typed; the verdict is computed, never chosen.
  */
 export default function TestWeights({
+  category,
   capacity,
-  rows,
+  value,
   onChange,
 }: {
+  category: string;
   capacity: string;
-  rows: TestWeightRow[];
-  onChange: (rows: TestWeightRow[]) => void;
+  value: TestDraft;
+  onChange: (draft: TestDraft) => void;
 }) {
-  const divisionG = divisionFromCapacity(capacity);
+  const measure = measureFor(category, capacity);
+  const copy = COPY[measure];
+  const max = maxFromCapacity(capacity, measure);
+  const statedE = measure === "mass" ? divisionFromCapacity(capacity) : null;
+  const unit = entryUnit(measure, max);
 
-  // No parsable division (e.g. a fuel dispenser measured in L/min) — the
-  // weight table does not apply, so say so rather than showing a broken form.
-  if (divisionG == null) {
-    return (
-      <div>
-        <Label>Calibration record</Label>
-        <div className="flex items-start gap-3 rounded-xl border border-dashed border-line-strong p-4 text-[13px] text-ink-600">
-          <Scale className="mt-0.5 h-4 w-4 shrink-0 text-ink-400" />
-          <span>
-            This instrument&apos;s capacity (<span className="font-mono">{capacity}</span>) has no
-            weight division, so the standard-weight table does not apply. Record the applicable
-            test in the notes below.
-          </span>
-        </div>
-      </div>
-    );
-  }
+  const [customValue, setCustomValue] = useState("");
+  const [customUnit, setCustomUnit] = useState(unit.label);
+  const [customError, setCustomError] = useState<string | null>(null);
+  const [eValue, setEValue] = useState(value.divisionG != null ? String(value.divisionG) : "");
+  const [eUnit, setEUnit] = useState("g");
 
-  const evaluated = evaluateAll(rows, divisionG);
-  const verdict = verdictFor(evaluated);
-  const failing = evaluated.filter((r) => !r.pass).length;
+  const needsE = measure === "mass" && statedE == null;
+  const e = statedE ?? value.divisionG;
+  const eProblem =
+    needsE && eValue !== ""
+      ? !(Number(eValue) > 0)
+        ? "Enter a positive number"
+        : max != null && Number(eValue) * (eUnit === "kg" ? 1000 : 1) > max / 100
+          ? "That interval is too coarse for this capacity — check the data plate"
+          : null
+      : null;
+  const locked = measure === "mass" && e == null;
 
-  const setRow = (i: number, patch: Partial<TestWeightRow>) =>
-    onChange(rows.map((r, j) => (i === j ? { ...r, ...patch } : r)));
-  const addRow = (nominalG: number) => onChange([...rows, { nominalG, observedG: nominalG }]);
-  const removeRow = (i: number) => onChange(rows.filter((_, j) => j !== i));
+  const record = locked ? null : evaluateRecord(measure, value.points, e);
+  const verdict = recordVerdict(record);
+  const failing = record?.points.filter((p) => !p.pass).length ?? 0;
 
-  const unused = STANDARD_WEIGHTS_G.filter((w) => !rows.some((r) => r.nominalG === w));
+  const setPoints = (points: TestPoint[]) => onChange({ ...value, points });
+  const setObserved = (i: number, typed: string) =>
+    setPoints(value.points.map((p, j) => (i === j ? { ...p, observed: roundTo(Number(typed) * unit.factor) } : p)));
+  const addPoint = (nominal: number) => setPoints([...value.points, { nominal, observed: nominal }]);
+  const removePoint = (i: number) => setPoints(value.points.filter((_, j) => j !== i));
+
+  const setDivision = (raw: string, u: string) => {
+    setEValue(raw);
+    setEUnit(u);
+    const g = Number(raw) * (u === "kg" ? 1000 : 1);
+    const ok = raw !== "" && g > 0 && !(max != null && g > max / 100);
+    // Points were evaluated against the old interval — keep them, re-evaluated live.
+    onChange({ ...value, divisionG: ok ? g : null });
+  };
+
+  const addCustom = () => {
+    const factor = UNITS[measure].find((u) => u.label === customUnit)?.factor ?? 1;
+    const nominal = roundTo(Number(customValue) * factor);
+    if (!(nominal > 0)) return setCustomError("Enter the value of the standard you applied");
+    if (max != null && nominal > max) {
+      return setCustomError(`That's more than the instrument's capacity (${formatQuantity(max, measure)})`);
+    }
+    if (value.points.some((p) => p.nominal === nominal)) {
+      return setCustomError(`${formatQuantity(nominal, measure)} is already recorded`);
+    }
+    addPoint(nominal);
+    setCustomValue("");
+    setCustomError(null);
+  };
+
+  const presets = presetsFor(measure, max).filter((v) => !value.points.some((p) => p.nominal === v));
 
   return (
     <div>
-      <Label hint={`e = ${formatMass(divisionG)}`}>Calibration record — standard weights</Label>
+      <Label hint={statedE != null ? `e = ${formatQuantity(statedE, "mass")}` : MEASURE_STANDARD[measure]}>
+        {copy.title}
+      </Label>
 
-      <div className="overflow-hidden rounded-xl border border-line">
-        {rows.length > 0 && (
+      {needsE && (
+        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50/60 p-3.5">
+          <div className="flex items-start gap-2 text-[13px] text-amber-900">
+            <Info className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              The recorded capacity (<span className="font-mono">{capacity}</span>) doesn&apos;t state the
+              verification scale interval. Read <strong>e</strong> off the instrument&apos;s data plate — the limits
+              depend on it.
+            </span>
+          </div>
+          <div className="mt-2.5 flex flex-wrap items-center gap-2">
+            <label htmlFor="division-e" className="text-xs font-medium text-ink-700">
+              Scale interval e
+            </label>
+            <input
+              id="division-e"
+              type="number"
+              min="0"
+              step="any"
+              inputMode="decimal"
+              value={eValue}
+              onChange={(ev) => setDivision(ev.target.value, eUnit)}
+              placeholder={max != null && max >= 1_000_000 ? "20" : "1"}
+              className={cx("field h-8 w-24 py-0 font-mono text-[13px]", eProblem && "border-rose-500")}
+            />
+            <select
+              aria-label="Scale interval unit"
+              value={eUnit}
+              onChange={(ev) => setDivision(eValue, ev.target.value)}
+              className="field h-8 w-auto py-0 text-[13px]"
+            >
+              <option value="g">g</option>
+              <option value="kg">kg</option>
+            </select>
+            {eProblem && <span className="text-xs text-rose-700">{eProblem}</span>}
+          </div>
+        </div>
+      )}
+
+      <div className={cx("overflow-hidden rounded-xl border border-line", locked && "opacity-60")}>
+        {record && record.points.length > 0 && (
           <div className="overflow-x-auto">
             <table className="w-full border-collapse text-[13px]">
               <thead>
                 <tr className="bg-ink-50 text-[11px] font-semibold uppercase tracking-wider text-ink-500">
-                  <th className="px-3 py-2 text-left">Standard weight</th>
-                  <th className="px-3 py-2 text-left">Instrument reading (g)</th>
+                  <th className="px-3 py-2 text-left">{copy.standard}</th>
+                  <th className="px-3 py-2 text-left">
+                    {copy.reading} ({unit.label})
+                  </th>
                   <th className="px-3 py-2 text-right">Error</th>
                   <th className="px-3 py-2 text-right">MPE</th>
                   <th className="px-3 py-2 text-center">Result</th>
@@ -77,70 +255,128 @@ export default function TestWeights({
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
-                {evaluated.map((r, i) => (
-                  <tr key={i} className={cx(!r.pass && "bg-rose-50/50")}>
-                    <td className="px-3 py-2">
-                      <span className="font-mono font-medium text-ink-900">{formatMass(r.nominalG)}</span>
-                    </td>
-                    <td className="px-3 py-2">
-                      <input
-                        type="number"
-                        step="0.001"
-                        inputMode="decimal"
-                        value={Number.isFinite(r.observedG) ? r.observedG : ""}
-                        onChange={(e) => setRow(i, { observedG: Number(e.target.value) })}
-                        className="field h-8 w-32 py-0 font-mono text-[13px]"
-                        aria-label={`Reading for ${formatMass(r.nominalG)}`}
-                      />
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <span className={cx("font-mono", r.pass ? "text-ink-700" : "font-semibold text-rose-700")}>
-                        {formatError(r.errorG)}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 text-right font-mono text-ink-500">± {r.mpeG} g</td>
-                    <td className="px-3 py-2 text-center">
-                      <Badge tone={r.pass ? "good" : "bad"}>{r.pass ? "Within" : "Outside"}</Badge>
-                    </td>
-                    <td className="px-2 py-2 text-right">
-                      <button
-                        type="button"
-                        onClick={() => removeRow(i)}
-                        className="rounded-lg p-1.5 text-ink-400 transition hover:bg-rose-50 hover:text-rose-700 focus-ring"
-                        aria-label={`Remove ${formatMass(r.nominalG)} row`}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {record.points.map((p, i) => {
+                  const label = formatQuantity(p.nominal, measure);
+                  return (
+                    <tr key={p.nominal} className={cx(!p.pass && "bg-rose-50/50")}>
+                      <td className="px-3 py-2">
+                        <span className="font-mono font-medium text-ink-900">{label}</span>
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="number"
+                          min="0"
+                          step="any"
+                          inputMode="decimal"
+                          value={Number.isFinite(p.observed) ? roundTo(p.observed / unit.factor) : ""}
+                          onChange={(ev) => setObserved(i, ev.target.value)}
+                          className="field h-8 w-32 py-0 font-mono text-[13px]"
+                          aria-label={`Reading for ${label}`}
+                        />
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <span className={cx("font-mono", p.pass ? "text-ink-700" : "font-semibold text-rose-700")}>
+                          {formatSignedQuantity(p.error, measure)}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono text-ink-500">{formatLimit(p.mpe, measure)}</td>
+                      <td className="px-3 py-2 text-center">
+                        <Badge tone={p.pass ? "good" : "bad"}>{p.pass ? "Within" : "Outside"}</Badge>
+                      </td>
+                      <td className="px-2 py-2 text-right">
+                        <button
+                          type="button"
+                          onClick={() => removePoint(i)}
+                          className="rounded-lg p-1.5 text-ink-400 transition hover:bg-rose-50 hover:text-rose-700 focus-ring"
+                          aria-label={`Remove ${label} row`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
 
-        <div className="flex flex-wrap items-center gap-2 border-t border-line bg-ink-50/50 px-3 py-2.5">
-          <span className="text-xs text-ink-500">
-            {rows.length === 0 ? "Add the weights you applied:" : "Add another:"}
-          </span>
-          {unused.map((w) => (
-            <button
-              key={w}
-              type="button"
-              onClick={() => addRow(w)}
-              className="inline-flex items-center gap-1 rounded-lg border border-line-strong bg-white px-2 py-1 font-mono text-xs text-ink-700 transition hover:border-seal-400 hover:bg-seal-50/50 focus-ring"
-            >
-              <Plus className="h-3 w-3" />
-              {formatMass(w)}
-            </button>
-          ))}
-          {unused.length === 0 && rows.length > 0 && (
-            <span className="text-xs text-ink-400">All standard weights recorded.</span>
+        <div className="space-y-2 border-t border-line bg-ink-50/50 px-3 py-2.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-ink-500">
+              {locked
+                ? "Enter the scale interval above to start recording."
+                : value.points.length === 0
+                  ? copy.add
+                  : "Add another:"}
+            </span>
+            {!locked &&
+              presets.map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => addPoint(v)}
+                  className="inline-flex items-center gap-1 rounded-lg border border-line-strong bg-white px-2 py-1 font-mono text-xs text-ink-700 transition hover:border-seal-400 hover:bg-seal-50/50 focus-ring"
+                >
+                  <Plus className="h-3 w-3" />
+                  {formatQuantity(v, measure)}
+                </button>
+              ))}
+          </div>
+
+          {!locked && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-ink-500">Other value:</span>
+              <input
+                type="number"
+                min="0"
+                step="any"
+                inputMode="decimal"
+                value={customValue}
+                onChange={(ev) => {
+                  setCustomValue(ev.target.value);
+                  setCustomError(null);
+                }}
+                onKeyDown={(ev) => {
+                  if (ev.key === "Enter") {
+                    ev.preventDefault();
+                    addCustom();
+                  }
+                }}
+                placeholder="e.g. 250"
+                aria-label={`Value of the ${COPY[measure].notes.slice(0, -1)} to add`}
+                className={cx("field h-8 w-28 py-0 font-mono text-[13px]", customError && "border-rose-500")}
+              />
+              <select
+                aria-label="Unit"
+                value={customUnit}
+                onChange={(ev) => setCustomUnit(ev.target.value)}
+                className="field h-8 w-auto py-0 text-[13px]"
+              >
+                {UNITS[measure].filter((u) => max == null || u.factor <= max).map((u) => (
+                  <option key={u.label} value={u.label}>
+                    {u.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={addCustom}
+                className="inline-flex h-8 items-center gap-1 rounded-lg border border-line-strong bg-white px-2.5 text-xs font-medium text-ink-700 transition hover:border-seal-400 hover:bg-seal-50/50 focus-ring"
+              >
+                <Plus className="h-3 w-3" />
+                Add
+              </button>
+              {max != null && (
+                <span className="text-xs text-ink-400">up to {formatQuantity(max, measure)}</span>
+              )}
+              {customError && <span className="w-full text-xs text-rose-700">{customError}</span>}
+            </div>
           )}
         </div>
       </div>
 
-      {verdict && (
+      {verdict && record && (
         <div
           className={cx(
             "mt-2 flex items-start gap-2.5 rounded-xl border px-3.5 py-2.5 text-[13px]",
@@ -157,19 +393,20 @@ export default function TestWeights({
           <span>
             {verdict === "PASS" ? (
               <>
-                All {rows.length} reading{rows.length === 1 ? "" : "s"} are within the Maximum
-                Permissible Error for accuracy class III.
+                {record.points.length === 1 ? "The reading is" : `All ${record.points.length} readings are`} within
+                the Maximum Permissible Error ({MEASURE_STANDARD[measure]}).
               </>
             ) : (
               <>
-                <strong>{failing}</strong> of {rows.length} reading{rows.length === 1 ? "" : "s"}{" "}
-                {failing === 1 ? "is" : "are"} outside the Maximum Permissible Error. The outcome
-                below should normally be Fail.
+                <strong>{failing}</strong> of {record.points.length} reading
+                {record.points.length === 1 ? "" : "s"} {failing === 1 ? "is" : "are"} outside the Maximum
+                Permissible Error. The outcome below should normally be Fail.
               </>
             )}
           </span>
         </div>
       )}
+
     </div>
   );
 }

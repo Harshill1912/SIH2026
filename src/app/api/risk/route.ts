@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireSession } from "@/lib/auth";
-import { parseTestWeights } from "@/lib/mpe";
+import { parseTestRecord, parseTestWeights } from "@/lib/mpe";
 import { integrityFlags, scoreInstrument } from "@/lib/risk";
 
 const DAY = 86_400_000;
@@ -87,6 +87,7 @@ export async function GET() {
         category: inst.category,
         capacity: inst.capacity,
         lastReadings: last ? parseTestWeights(last.testWeights) : [],
+        lastPoints: last ? parseTestRecord(last.testWeights)?.points : null,
         failCount: inspected.slice(1).filter((a) => failed(a.inspection!)).length,
         daysToExpiry: cert ? Math.ceil((cert.validTill.getTime() - now) / DAY) : null,
         reportKinds: inst.reports.map((r) => r.kind),
@@ -125,6 +126,7 @@ export async function GET() {
       const flags = integrityFlags({
         capacity: i.application.instrument.capacity,
         readings: parseTestWeights(i.testWeights),
+        points: parseTestRecord(i.testWeights)?.points,
         geotag: i.gpsLat != null && i.gpsLng != null ? { lat: i.gpsLat, lng: i.gpsLng } : null,
         premises: b.lat != null && b.lng != null ? { lat: b.lat, lng: b.lng } : null,
         photoSharedWith: i.photoHash

@@ -25,8 +25,8 @@ import CertificateModal from "@/components/certificate/CertificateModal";
 import EvidenceModal, { type EvidenceInspection } from "@/components/admin/EvidenceModal";
 import GeoCapture from "./GeoCapture";
 import PhotoCapture, { type PhotoValue } from "./PhotoCapture";
-import TestWeights from "./TestWeights";
-import { divisionFromCapacity, evaluateAll, verdictFor, type TestWeightRow } from "@/lib/mpe";
+import TestWeights, { EMPTY_DRAFT, draftToRecord, type TestDraft } from "./TestWeights";
+import { recordVerdict } from "@/lib/mpe";
 import { useRole } from "@/context/RoleContext";
 import { useNow } from "@/hooks/useNow";
 import ScheduleChip from "@/components/ScheduleChip";
@@ -161,7 +161,7 @@ export default function OfficerFieldView() {
   );
   const [geo, setGeo] = useState<GeoFix | null>(null);
   const [photo, setPhoto] = useState<PhotoValue | null>(null);
-  const [weights, setWeights] = useState<TestWeightRow[]>([]);
+  const [weights, setWeights] = useState<TestDraft>(EMPTY_DRAFT);
   const [submitting, setSubmitting] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [statusNotification, setStatusNotification] = useState<string | null>(null);
@@ -224,18 +224,19 @@ export default function OfficerFieldView() {
     setSelectedId(id);
     // Evidence is per case; the geotag is not, since one fix covers a whole shop.
     setPhoto(null);
-    setWeights([]);
+    setWeights(EMPTY_DRAFT);
   };
 
   const buildPayload = (applicationId: string): InspectionPayload => {
-    const divisionG = selectedCase ? divisionFromCapacity(selectedCase.instrument.capacity) : null;
-    const evaluated = divisionG != null ? evaluateAll(weights, divisionG) : [];
+    const record = selectedCase
+      ? draftToRecord(selectedCase.instrument.category, selectedCase.instrument.capacity, weights)
+      : null;
     return {
     applicationId,
     result,
     notes,
-    testWeights: evaluated.length > 0 ? JSON.stringify(evaluated) : "",
-    mpeVerdict: verdictFor(evaluated),
+    testWeights: record && record.points.length > 0 ? JSON.stringify(record) : "",
+    mpeVerdict: recordVerdict(record),
     photoAttached: Boolean(photo),
     photoData: photo?.dataUrl ?? null,
     photoName: photo?.name ?? null,
@@ -294,7 +295,7 @@ export default function OfficerFieldView() {
       setCases((prev) => prev.filter((c) => c.id !== selectedCase.id));
       setSelectedId(null);
       setPhoto(null);
-      setWeights([]);
+      setWeights(EMPTY_DRAFT);
       flash("Saved on this device. Go online and press Sync to upload.", 4000);
       return;
     }
@@ -307,7 +308,7 @@ export default function OfficerFieldView() {
         else flash(`Inspection recorded · ${result}`);
         setSelectedId(null);
         setPhoto(null);
-        setWeights([]);
+        setWeights(EMPTY_DRAFT);
         fetchApplications();
       } else {
         alert(data.error || "Failed to record inspection");
@@ -695,9 +696,12 @@ export default function OfficerFieldView() {
                     <KV label="Capacity" value={selectedCase.instrument.capacity} mono />
                   </div>
 
+                  {/* Keyed by case so the scale-interval field starts fresh for each instrument. */}
                   <TestWeights
+                    key={selectedCase.id}
+                    category={selectedCase.instrument.category}
                     capacity={selectedCase.instrument.capacity}
-                    rows={weights}
+                    value={weights}
                     onChange={setWeights}
                   />
 
