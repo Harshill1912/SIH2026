@@ -23,6 +23,7 @@ export default function GeoCapture({
   autoLocate = true,
   manualFix = null,
   manualLabel = "Use shop location",
+  captureLabel = "Capture",
 }: {
   value: GeoFix | null;
   onChange: (fix: GeoFix | null) => void;
@@ -32,6 +33,8 @@ export default function GeoCapture({
   /** Demo-mode fallback location; ignored unless demo locations are allowed. */
   manualFix?: { lat: number; lng: number } | null;
   manualLabel?: string;
+  /** Text of the button before any fix exists. */
+  captureLabel?: string;
 }) {
   const [status, setStatus] = useState<Status>(value ? "ok" : autoLocate ? "locating" : "idle");
   const [error, setError] = useState<string | null>(null);
@@ -176,7 +179,7 @@ export default function GeoCapture({
               onClick={locate}
               disabled={status === "locating" && !value}
             >
-              {value ? "Re-capture" : status === "idle" ? "Capture" : "Retry"}
+              {value ? "Re-capture" : status === "idle" ? captureLabel : "Retry"}
             </Button>
             {canUseManual && value?.source !== "device" && (
               <Button type="button" size="sm" variant="ghost" onClick={useManualLocation}>

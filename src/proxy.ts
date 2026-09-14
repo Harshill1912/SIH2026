@@ -16,6 +16,8 @@ const PUBLIC_PATHS: RegExp[] = [
   /^\/api\/reports$/, // a citizen files a complaint without an account
   /^\/api\/auth\//,
   /^\/api\/demo-tokens(\/|$)/,
+  /^\/api\/geocode\/reverse$/, // premises address from GPS, used during enrolment
+
   // PWA and crawler metadata must be readable before sign-in, or the app is
   // not installable and link previews break.
   /^\/manifest\.webmanifest$/,

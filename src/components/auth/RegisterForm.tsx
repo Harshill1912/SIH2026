@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -21,6 +21,14 @@ import type { SessionUser } from "@/lib/session-types";
 import GeoCapture from "@/components/officer/GeoCapture";
 import type { GeoFix } from "@/lib/geo";
 import { GEOFENCE_RADIUS_M, fixError, formatDistance } from "@/lib/geofence";
+import { lookupAddress } from "@/lib/address";
+
+type AddressLookupState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "filled" }
+  | { status: "suggested"; address: string }
+  | { status: "error"; message: string };
 
 /** Demo-mode stand-in for the quick-fill trader's shop in Rohini. */
 const DEMO_PREMISES = { lat: 28.7353, lng: 77.118 };
@@ -83,6 +91,36 @@ export default function RegisterForm({
   const [touched, setTouched] = useState<Partial<Record<RegisterField | "location", boolean>>>({});
   const [showPassword, setShowPassword] = useState(false);
   const [premises, setPremises] = useState<GeoFix | null>(null);
+  const [lookup, setLookup] = useState<AddressLookupState>({ status: "idle" });
+  /** Increments per capture, so a slow lookup can't overwrite a newer one. */
+  const lookupSeq = useRef(0);
+
+  const applyDetectedAddress = (address: string) => {
+    setF((prev) => ({ ...prev, address }));
+    setTouched((t) => ({ ...t, address: true }));
+    setLookup({ status: "filled" });
+  };
+
+  const onPremisesFix = async (fix: GeoFix | null) => {
+    setPremises(fix);
+    if (badField === "location") {
+      setBadField(null);
+      setError(null);
+    }
+    if (!fix) {
+      setLookup({ status: "idle" });
+      return;
+    }
+    const seq = ++lookupSeq.current;
+    // Decided now: an address the trader already typed is never overwritten silently.
+    const addressWasEmpty = !f.address.trim();
+    setLookup({ status: "loading" });
+    const result = await lookupAddress(fix.lat, fix.lng);
+    if (seq !== lookupSeq.current) return;
+    if (!result.ok) setLookup({ status: "error", message: result.error });
+    else if (addressWasEmpty) applyDetectedAddress(result.address);
+    else setLookup({ status: "suggested", address: result.address });
+  };
 
   const quickFill = () => {
     const suffix = Math.floor(1000 + Math.random() * 9000);
@@ -317,6 +355,48 @@ export default function RegisterForm({
                   {...a11y("address")}
                 />
                 <FieldError id="address-error" message={show("address")} />
+
+                <div className="mt-3">
+                  <GeoCapture
+                    label="Live location"
+                    captureLabel="Use my live location"
+                    autoLocate={false}
+                    value={premises}
+                    onChange={onPremisesFix}
+                    manualFix={DEMO_PREMISES}
+                    manualLabel="Use demo location"
+                  />
+                  {lookup.status === "loading" && (
+                    <p className="mt-1.5 text-[12.5px] text-ink-500">Looking up the address at this location…</p>
+                  )}
+                  {lookup.status === "filled" && (
+                    <p className="mt-1.5 flex items-start gap-1.5 text-[12.5px] text-seal-800">
+                      <Check className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      Address filled from your location — check it and add the shop number if missing.
+                    </p>
+                  )}
+                  {lookup.status === "suggested" && (
+                    <div className="mt-1.5 rounded-lg border border-line bg-ink-50/60 px-3 py-2 text-[12.5px] text-ink-700">
+                      Detected here: <span className="text-ink-900">{lookup.address}</span>{" "}
+                      <button
+                        type="button"
+                        onClick={() => applyDetectedAddress(lookup.address)}
+                        className="font-medium text-seal-700 hover:text-seal-800 hover:underline"
+                      >
+                        Use this address
+                      </button>
+                    </div>
+                  )}
+                  {lookup.status === "error" && (
+                    <p className="mt-1.5 text-[12.5px] text-amber-800">{lookup.message}</p>
+                  )}
+                  <p className="mt-1.5 text-[12px] text-ink-500">
+                    Do this while standing at your premises. Verification officers must be on site — within{" "}
+                    {formatDistance(GEOFENCE_RADIUS_M)} of this point — to certify your instruments.
+                    {(lookup.status === "filled" || lookup.status === "suggested") && " Address data © OpenStreetMap contributors."}
+                  </p>
+                  <FieldError id="location-error" message={locationShown} />
+                </div>
               </div>
               <div>
                 <Label htmlFor="contact" hint="10-digit mobile, for SMS reminders">
@@ -345,27 +425,6 @@ export default function RegisterForm({
                   </span>
                 </div>
                 <FieldError id="contact-error" message={show("contact")} />
-              </div>
-              <div>
-                <GeoCapture
-                  label="Premises location"
-                  autoLocate={false}
-                  value={premises}
-                  onChange={(fix) => {
-                    setPremises(fix);
-                    if (badField === "location") {
-                      setBadField(null);
-                      setError(null);
-                    }
-                  }}
-                  manualFix={DEMO_PREMISES}
-                  manualLabel="Use demo location"
-                />
-                <p className="mt-1.5 text-[12px] text-ink-500">
-                  Capture this while standing at your premises. Verification officers must be on site — within{" "}
-                  {formatDistance(GEOFENCE_RADIUS_M)} of this point — to certify your instruments.
-                </p>
-                <FieldError id="location-error" message={locationShown} />
               </div>
               <Button type="submit" size="lg" className="w-full" iconRight={ArrowRight}>
                 Continue

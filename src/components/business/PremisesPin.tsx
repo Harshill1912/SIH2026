@@ -5,6 +5,7 @@ import { MapPinOff, Check } from "lucide-react";
 import GeoCapture from "@/components/officer/GeoCapture";
 import type { GeoFix } from "@/lib/geo";
 import { GEOFENCE_RADIUS_M, fixError, formatDistance } from "@/lib/geofence";
+import { lookupAddress } from "@/lib/address";
 import { Button, Card } from "@/components/ui";
 
 /**
@@ -16,7 +17,17 @@ export default function PremisesPin({ onPinned }: { onPinned: () => void }) {
   const [fix, setFix] = useState<GeoFix | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [detected, setDetected] = useState<string | null>(null);
   const problem = fixError(fix);
+
+  const onFix = async (next: GeoFix | null) => {
+    setFix(next);
+    setDetected(null);
+    if (!next) return;
+    // Shown so the trader can confirm they really are at the shop before a one-time save.
+    const r = await lookupAddress(next.lat, next.lng);
+    setDetected(r.ok ? r.address : null);
+  };
 
   const save = async () => {
     if (!fix || problem) return;
@@ -53,7 +64,19 @@ export default function PremisesPin({ onPinned }: { onPinned: () => void }) {
           </p>
 
           <div className="mt-4 max-w-xl space-y-3">
-            <GeoCapture label="Premises location" autoLocate={false} value={fix} onChange={setFix} />
+            <GeoCapture
+              label="Live location"
+              captureLabel="Use my live location"
+              autoLocate={false}
+              value={fix}
+              onChange={onFix}
+            />
+            {detected && (
+              <p className="rounded-lg border border-line bg-white px-3 py-2 text-[13px] text-ink-700">
+                You appear to be at: <span className="font-medium text-ink-900">{detected}</span>
+                <span className="block text-xs text-ink-400">Address data © OpenStreetMap contributors</span>
+              </p>
+            )}
             {fix && problem && <p className="text-[13px] text-rose-700">{problem}</p>}
             {error && <p className="text-[13px] text-rose-700">{error}</p>}
             <Button icon={Check} onClick={save} loading={saving} disabled={!fix || Boolean(problem)}>
