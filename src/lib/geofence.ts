@@ -63,7 +63,7 @@ export function fixError(fix: LocationFix | null | undefined, opts: GeofenceOpti
     return "GPS accuracy is unknown — capture the location again";
   }
   if (fix.accuracyM > maxAccuracyM) {
-    return `GPS fix is too imprecise (±${Math.round(fix.accuracyM)} m). Step into the open and re-capture — it must be within ±${maxAccuracyM} m.`;
+    return `Location is too rough (±${Math.round(fix.accuracyM)} m) — it needs to be within ±${maxAccuracyM} m. Tap "Try again" and hold still. Laptops estimate location from Wi-Fi and are often this rough; a phone's GPS is far more precise.`;
   }
   return null;
 }
