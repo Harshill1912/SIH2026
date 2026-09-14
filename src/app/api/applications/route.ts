@@ -115,6 +115,19 @@ export async function POST(request: Request) {
       );
     }
 
+    // Every inspection is geofenced against the premises. Without a pin, an
+    // officer would travel to the site and still be unable to record it.
+    if (instrument.business.lat == null || instrument.business.lng == null) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Pin your premises location from the dashboard before applying for verification",
+          field: "location",
+        },
+        { status: 409 }
+      );
+    }
+
     // Check if there is already an active pending or assigned application
     const existingActive = await prisma.application.findFirst({
       where: {

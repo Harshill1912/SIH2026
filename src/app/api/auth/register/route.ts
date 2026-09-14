@@ -4,6 +4,7 @@ import { hashPassword } from "@/lib/password";
 import { sessionFromUser, setSessionCookie, signSession } from "@/lib/auth";
 import { clientKey, rateLimit, tooMany } from "@/lib/rate-limit";
 import { firstRegisterError, formatPhone, normalizeEmail } from "@/lib/validation";
+import { fixError } from "@/lib/geofence";
 
 /**
  * Self-registration for a user of weights and measures. Creates the business
@@ -44,6 +45,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: false, error: invalid.error, field: invalid.field }, { status: 400 });
   }
 
+  // Premises location: every inspection is geofenced against it, so it is
+  // captured at enrolment from the device, like the officer's own fix.
+  const num = (k: string) => (typeof body[k] === "number" && Number.isFinite(body[k]) ? (body[k] as number) : null);
+  const premises = {
+    lat: num("lat"),
+    lng: num("lng"),
+    accuracyM: num("accuracyM"),
+    source: body.source === "manual" ? ("manual" as const) : ("device" as const),
+  };
+  const locationProblem = fixError(premises);
+  if (locationProblem) {
+    return NextResponse.json({ success: false, error: locationProblem, field: "location" }, { status: 400 });
+  }
+
   const businessName = input.businessName.trim();
   const regNo = input.regNo.trim().toUpperCase();
   const address = input.address.trim();
@@ -74,7 +89,7 @@ export async function POST(request: Request) {
     // to sign in, or a login with no business, would both be dead records.
     const user = await prisma.$transaction(async (tx) => {
       const business = await tx.business.create({
-        data: { name: businessName, regNo, address, contact },
+        data: { name: businessName, regNo, address, contact, lat: premises.lat, lng: premises.lng },
       });
       return tx.user.create({
         data: {

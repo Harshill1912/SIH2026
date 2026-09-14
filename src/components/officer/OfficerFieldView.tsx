@@ -20,6 +20,7 @@ import {
   QrCode,
   Printer,
   MapPin,
+  MapPinOff,
 } from "lucide-react";
 import CertificateModal from "@/components/certificate/CertificateModal";
 import EvidenceModal, { type EvidenceInspection } from "@/components/admin/EvidenceModal";
@@ -31,6 +32,7 @@ import { useRole } from "@/context/RoleContext";
 import { useNow } from "@/hooks/useNow";
 import ScheduleChip from "@/components/ScheduleChip";
 import { formatGeo, type GeoFix } from "@/lib/geo";
+import { checkGeofence, formatDistance } from "@/lib/geofence";
 import {
   Badge,
   Button,
@@ -64,6 +66,7 @@ interface InspectionPayload {
   gpsLat: number | null;
   gpsLng: number | null;
   gpsAccuracyM: number | null;
+  gpsSource: "device" | "manual" | null;
 }
 
 interface QueuedInspection extends InspectionPayload {
@@ -71,6 +74,8 @@ interface QueuedInspection extends InspectionPayload {
   appNumber: string;
   serialNumber: string;
   queuedAt: string;
+  /** Set when a sync attempt was refused, so the officer can see why it is still queued. */
+  syncError?: string;
 }
 
 interface OfficerApplicationRecord {
@@ -79,7 +84,7 @@ interface OfficerApplicationRecord {
   status: string;
   createdAt: string;
   scheduledFor: string | null;
-  business: { id: string; name: string; address: string; contact: string };
+  business: { id: string; name: string; address: string; contact: string; lat: number | null; lng: number | null };
   instrument: {
     id: string;
     serialNumber: string;
@@ -100,6 +105,9 @@ interface OfficerApplicationRecord {
 }
 
 const QUEUE_KEY = "sih_offline_inspections";
+
+/** Local id for an inspection queued on the device. Called from the submit handler only. */
+const offlineId = () => `offline-${Date.now()}`;
 
 function readOfflineQueue(): QueuedInspection[] {
   try {
@@ -175,6 +183,8 @@ export default function OfficerFieldView() {
   } | null>(null);
 
   const selectedCase = cases.find((c) => c.id === selectedId) ?? null;
+  /** Whether the current fix counts as on site for the selected case's premises. */
+  const fence = selectedCase ? checkGeofence(geo, selectedCase.business) : null;
 
   const applyApplications = useCallback((list: OfficerApplicationRecord[] | null) => {
     if (list) {
@@ -244,6 +254,7 @@ export default function OfficerFieldView() {
     gpsLat: geo?.lat ?? null,
     gpsLng: geo?.lng ?? null,
     gpsAccuracyM: geo?.accuracyM ?? null,
+    gpsSource: geo?.source ?? null,
     };
   };
 
@@ -251,17 +262,28 @@ export default function OfficerFieldView() {
     if (offlineQueue.length === 0) return;
     setSyncing(true);
     let synced = 0;
+    // Refused items stay queued with their reason — a sync must never discard
+    // an inspection the server did not accept.
+    const remaining: QueuedInspection[] = [];
     try {
       for (const item of offlineQueue) {
         const data = await postInspection(item);
         if (data.success) {
           synced++;
           if (data.certificate) setIssuedCertificate(data.certificate);
+        } else {
+          remaining.push({ ...item, syncError: data.error || "Refused by the server" });
         }
       }
-      localStorage.removeItem(QUEUE_KEY);
-      setOfflineQueue([]);
-      flash(`Synced ${synced} queued inspection${synced === 1 ? "" : "s"}.`);
+      if (remaining.length > 0) localStorage.setItem(QUEUE_KEY, JSON.stringify(remaining));
+      else localStorage.removeItem(QUEUE_KEY);
+      setOfflineQueue(remaining);
+      flash(
+        remaining.length > 0
+          ? `Synced ${synced}; ${remaining.length} refused and kept on this device — see the reason on each.`
+          : `Synced ${synced} queued inspection${synced === 1 ? "" : "s"}.`,
+        remaining.length > 0 ? 6000 : undefined
+      );
       fetchApplications();
     } catch (e) {
       console.error("Sync error:", e);
@@ -273,13 +295,14 @@ export default function OfficerFieldView() {
 
   const handleSubmitInspection = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedCase || !geo) return;
+    // Same gate as the disabled button — and the server applies it again.
+    if (!selectedCase || !photo || fence?.status !== "inside") return;
     const payload = buildPayload(selectedCase.id);
 
     if (isOffline) {
       const queued: QueuedInspection = {
         ...payload,
-        id: "offline-" + Date.now(),
+        id: offlineId(),
         appNumber: selectedCase.applicationNumber,
         serialNumber: selectedCase.instrument.serialNumber,
         queuedAt: new Date().toLocaleTimeString(),
@@ -418,6 +441,17 @@ export default function OfficerFieldView() {
           <span className="text-amber-800">
             {isOffline ? "Switch to Online to upload." : "Connection restored — ready to upload."}
           </span>
+          {offlineQueue.some((q) => q.syncError) && (
+            <ul className="mt-2 space-y-1 text-[12.5px]">
+              {offlineQueue
+                .filter((q) => q.syncError)
+                .map((q) => (
+                  <li key={q.id} className="text-rose-800">
+                    <span className="font-mono">{q.appNumber}</span> refused: {q.syncError}
+                  </li>
+                ))}
+            </ul>
+          )}
         </Notice>
       )}
 
@@ -750,7 +784,47 @@ export default function OfficerFieldView() {
                     </div>
                   </div>
 
-                  <GeoCapture value={geo} onChange={setGeo} />
+                  <div>
+                    <GeoCapture
+                      value={geo}
+                      onChange={setGeo}
+                      manualFix={selectedCase.business.lat != null && selectedCase.business.lng != null
+                        ? { lat: selectedCase.business.lat, lng: selectedCase.business.lng }
+                        : null}
+                    />
+                    {fence && fence.status !== "bad-fix" && (
+                      <div
+                        role="status"
+                        className={cx(
+                          "mt-2 flex items-start gap-2 rounded-lg border px-3 py-2 text-[13px]",
+                          fence.status === "inside"
+                            ? "border-seal-200 bg-seal-50/70 text-seal-900"
+                            : fence.status === "outside"
+                              ? "border-rose-200 bg-rose-50/70 text-rose-900"
+                              : "border-amber-200 bg-amber-50/70 text-amber-900"
+                        )}
+                      >
+                        {fence.status === "inside" ? (
+                          <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-seal-700" />
+                        ) : (
+                          <MapPinOff className="mt-0.5 h-4 w-4 shrink-0" />
+                        )}
+                        <span>
+                          {fence.status === "inside" ? (
+                            <>
+                              On site — <strong>{formatDistance(fence.distanceM)}</strong> from the registered
+                              premises (limit {formatDistance(fence.radiusM)}).
+                            </>
+                          ) : (
+                            fence.message
+                          )}
+                        </span>
+                      </div>
+                    )}
+                    {fence?.status === "bad-fix" && geo && (
+                      <p className="mt-2 text-[13px] text-rose-700">{fence.message}</p>
+                    )}
+                  </div>
 
                   <PhotoCapture value={photo} onChange={setPhoto} />
 
@@ -773,7 +847,7 @@ export default function OfficerFieldView() {
                       variant={isOffline ? "warn" : result === "FAIL" ? "danger" : "primary"}
                       icon={isOffline ? UploadCloud : FileCheck}
                       loading={submitting}
-                      disabled={!geo}
+                      disabled={!photo || fence?.status !== "inside"}
                       className="w-full"
                     >
                       {isOffline
@@ -782,9 +856,17 @@ export default function OfficerFieldView() {
                           ? "Submit & issue signed certificate"
                           : "Submit failed inspection"}
                     </Button>
-                    {!geo && (
+                    {(!photo || fence?.status !== "inside") && (
                       <p className="mt-2 text-center text-xs text-ink-500">
-                        A geotag is required before an inspection can be recorded.
+                        {!geo
+                          ? "Capture your location to continue."
+                          : fence?.status === "outside"
+                            ? `Blocked: you must be within ${formatDistance(fence.radiusM)} of the premises.`
+                            : fence?.status === "no-premises"
+                              ? "Blocked until the business pins its premises location."
+                              : fence?.status === "bad-fix"
+                                ? "Re-capture your location to continue."
+                                : "Take a photo of the lead seal to continue."}
                       </p>
                     )}
                   </div>

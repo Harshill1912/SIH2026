@@ -4,6 +4,7 @@ import prisma from "@/lib/prisma";
 import jwt from "jsonwebtoken";
 import QRCode from "qrcode";
 import { requireSession } from "@/lib/auth";
+import { checkGeofence } from "@/lib/geofence";
 import {
   divisionFromCapacity,
   evaluateRecord,
@@ -41,6 +42,7 @@ export async function POST(request: Request) {
       gpsLat,
       gpsLng,
       gpsAccuracyM,
+      gpsSource,
       testWeights,
     } = body;
 
@@ -65,6 +67,13 @@ export async function POST(request: Request) {
       }
       storedPhoto = photoData;
     }
+    // The seal photo is the evidence an instrument was physically sealed.
+    if (!storedPhoto) {
+      return NextResponse.json(
+        { success: false, error: "A photo of the lead seal is required", field: "photo" },
+        { status: 400 }
+      );
+    }
 
     const application = await prisma.application.findUnique({
       where: { id: applicationId },
@@ -85,6 +94,31 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { success: false, error: "This case is assigned to a different verifier" },
         { status: 403 }
+      );
+    }
+
+    // On-site check: nothing is recorded, and no certificate generated, unless
+    // the verifier's GPS fix is within the geofence of the registered premises.
+    const fence = checkGeofence(
+      {
+        lat: toNum(gpsLat),
+        lng: toNum(gpsLng),
+        accuracyM: toNum(gpsAccuracyM),
+        source: gpsSource === "manual" ? "manual" : "device",
+      },
+      application.business
+    );
+    if (fence.status !== "inside") {
+      const status = fence.status === "bad-fix" ? 400 : fence.status === "no-premises" ? 409 : 403;
+      return NextResponse.json(
+        {
+          success: false,
+          error: fence.message,
+          field: "location",
+          geofence: fence.status,
+          distanceM: fence.status === "outside" ? Math.round(fence.distanceM) : undefined,
+        },
+        { status }
       );
     }
 

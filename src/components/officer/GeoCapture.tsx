@@ -2,24 +2,38 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import { MapPin, LocateFixed, ExternalLink, AlertTriangle, RefreshCw } from "lucide-react";
-import { DEMO_FIX, formatGeo, geoErrorMessage, mapsUrl, type GeoFix } from "@/lib/geo";
+import { formatGeo, geoErrorMessage, mapsUrl, type GeoFix } from "@/lib/geo";
+import { DEMO_LOCATION_ALLOWED } from "@/lib/geofence";
 import { Button, Label, Mono, cx } from "@/components/ui";
 
-type Status = "locating" | "ok" | "error";
+type Status = "idle" | "locating" | "ok" | "error";
 
 /**
- * Captures the officer's position with the browser Geolocation API. Asks once
- * on mount, can be re-captured, and always offers the seeded shop location as
- * a manual fallback so a laptop demo never gets stuck on a permission prompt.
+ * Captures a position with the browser Geolocation API. Used by the officer
+ * (inspection geotag) and by the trader (pinning their premises).
+ *
+ * A manually chosen location is offered only when NEXT_PUBLIC_DEMO_LOCATION is
+ * on — for laptop demos with no GPS. In production the fix must come from the
+ * device, and the server refuses anything else.
  */
 export default function GeoCapture({
   value,
   onChange,
+  label = "Inspection geotag",
+  autoLocate = true,
+  manualFix = null,
+  manualLabel = "Use shop location",
 }: {
   value: GeoFix | null;
   onChange: (fix: GeoFix | null) => void;
+  label?: string;
+  /** Ask for a fix as soon as the component mounts. */
+  autoLocate?: boolean;
+  /** Demo-mode fallback location; ignored unless demo locations are allowed. */
+  manualFix?: { lat: number; lng: number } | null;
+  manualLabel?: string;
 }) {
-  const [status, setStatus] = useState<Status>(value ? "ok" : "locating");
+  const [status, setStatus] = useState<Status>(value ? "ok" : autoLocate ? "locating" : "idle");
   const [error, setError] = useState<string | null>(null);
 
   const locate = useCallback(() => {
@@ -51,7 +65,7 @@ export default function GeoCapture({
   // First fix on mount. setState only happens inside the geolocation
   // callbacks (or a deferred timeout), never synchronously in the effect.
   useEffect(() => {
-    if (value) return;
+    if (value || !autoLocate) return;
     if (typeof navigator === "undefined" || !("geolocation" in navigator)) {
       const id = window.setTimeout(() => {
         setStatus("error");
@@ -79,16 +93,18 @@ export default function GeoCapture({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const useDemoLocation = () => {
-    onChange(DEMO_FIX);
+  const canUseManual = DEMO_LOCATION_ALLOWED && manualFix != null;
+  const useManualLocation = () => {
+    if (!manualFix) return;
+    onChange({ lat: manualFix.lat, lng: manualFix.lng, accuracyM: null, source: "manual" });
     setStatus("ok");
     setError(null);
   };
 
   return (
     <div>
-      <Label hint={value?.source === "device" ? "from this device" : value ? "manual" : undefined}>
-        Inspection geotag
+      <Label hint={value?.source === "device" ? "from this device" : value ? "manual · demo" : "required"}>
+        {label}
       </Label>
 
       <div
@@ -128,6 +144,11 @@ export default function GeoCapture({
                     Open in Maps <ExternalLink className="h-3 w-3" />
                   </a>
                 </>
+              ) : status === "idle" ? (
+                <>
+                  <div className="text-sm font-medium text-ink-900">No location captured yet</div>
+                  <div className="text-xs text-ink-500">Tap Capture while standing at the premises.</div>
+                </>
               ) : status === "locating" ? (
                 <>
                   <div className="text-sm font-medium text-ink-900">Getting a GPS fix…</div>
@@ -137,7 +158,9 @@ export default function GeoCapture({
                 <>
                   <div className="text-sm font-medium text-amber-950">{error}</div>
                   <div className="text-xs text-amber-800">
-                    Retry, or use the registered shop location for this demo.
+                    {canUseManual
+                      ? "Retry, or use the demo location."
+                      : "Allow location access in your browser settings, then retry."}
                   </div>
                 </>
               )}
@@ -153,11 +176,11 @@ export default function GeoCapture({
               onClick={locate}
               disabled={status === "locating" && !value}
             >
-              {value ? "Re-capture" : "Retry"}
+              {value ? "Re-capture" : status === "idle" ? "Capture" : "Retry"}
             </Button>
-            {(status === "error" || value?.source === "manual") && !(value?.source === "device") && (
-              <Button type="button" size="sm" variant="ghost" onClick={useDemoLocation}>
-                Use shop location
+            {canUseManual && value?.source !== "device" && (
+              <Button type="button" size="sm" variant="ghost" onClick={useManualLocation}>
+                {manualLabel}
               </Button>
             )}
           </div>

@@ -18,6 +18,12 @@ import {
 } from "lucide-react";
 import { Button, Label, Notice, cx } from "@/components/ui";
 import type { SessionUser } from "@/lib/session-types";
+import GeoCapture from "@/components/officer/GeoCapture";
+import type { GeoFix } from "@/lib/geo";
+import { GEOFENCE_RADIUS_M, fixError, formatDistance } from "@/lib/geofence";
+
+/** Demo-mode stand-in for the quick-fill trader's shop in Rohini. */
+const DEMO_PREMISES = { lat: 28.7353, lng: 77.118 };
 import {
   businessErrors,
   loginErrors,
@@ -74,8 +80,9 @@ export default function RegisterForm({
   const [error, setError] = useState<string | null>(null);
   const [badField, setBadField] = useState<string | null>(null);
   /** Errors show only once a field has been left, or its step has been submitted. */
-  const [touched, setTouched] = useState<Partial<Record<RegisterField, boolean>>>({});
+  const [touched, setTouched] = useState<Partial<Record<RegisterField | "location", boolean>>>({});
   const [showPassword, setShowPassword] = useState(false);
+  const [premises, setPremises] = useState<GeoFix | null>(null);
 
   const quickFill = () => {
     const suffix = Math.floor(1000 + Math.random() * 9000);
@@ -117,17 +124,19 @@ export default function RegisterForm({
     "aria-describedby": show(k) ? `${k}-error` : undefined,
   });
 
-  const step1Ready = STEP_ONE_FIELDS.every((k) => !errors[k]);
+  const locationProblem = fixError(premises);
+  const locationShown = (touched.location ? locationProblem : null) ?? (badField === "location" ? error : null);
+  const step1Ready = STEP_ONE_FIELDS.every((k) => !errors[k]) && !locationProblem;
   const step2Ready = STEP_TWO_FIELDS.every((k) => !errors[k]);
   const rules = passwordRules(f.password);
 
-  const touchAll = (fields: RegisterField[]) =>
+  const touchAll = (fields: Array<RegisterField | "location">) =>
     setTouched((t) => ({ ...t, ...Object.fromEntries(fields.map((k) => [k, true])) }));
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (step === 1) {
-      touchAll(STEP_ONE_FIELDS);
+      touchAll([...STEP_ONE_FIELDS, "location"]);
       if (step1Ready) setStep(2);
       return;
     }
@@ -140,14 +149,20 @@ export default function RegisterForm({
       const res = await fetch("/api/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(f),
+        body: JSON.stringify({
+          ...f,
+          lat: premises?.lat ?? null,
+          lng: premises?.lng ?? null,
+          accuracyM: premises?.accuracyM ?? null,
+          source: premises?.source ?? null,
+        }),
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
         setError(data.error || "Registration failed");
         setBadField(data.field ?? null);
         // A server-side rejection of a step-one field — take them back to it.
-        if (STEP_ONE_FIELDS.includes(data.field)) setStep(1);
+        if (STEP_ONE_FIELDS.includes(data.field) || data.field === "location") setStep(1);
         return;
       }
       router.push("/");
@@ -330,6 +345,27 @@ export default function RegisterForm({
                   </span>
                 </div>
                 <FieldError id="contact-error" message={show("contact")} />
+              </div>
+              <div>
+                <GeoCapture
+                  label="Premises location"
+                  autoLocate={false}
+                  value={premises}
+                  onChange={(fix) => {
+                    setPremises(fix);
+                    if (badField === "location") {
+                      setBadField(null);
+                      setError(null);
+                    }
+                  }}
+                  manualFix={DEMO_PREMISES}
+                  manualLabel="Use demo location"
+                />
+                <p className="mt-1.5 text-[12px] text-ink-500">
+                  Capture this while standing at your premises. Verification officers must be on site — within{" "}
+                  {formatDistance(GEOFENCE_RADIUS_M)} of this point — to certify your instruments.
+                </p>
+                <FieldError id="location-error" message={locationShown} />
               </div>
               <Button type="submit" size="lg" className="w-full" iconRight={ArrowRight}>
                 Continue

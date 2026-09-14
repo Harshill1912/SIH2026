@@ -42,7 +42,7 @@ export default function PhotoCapture({
 
   return (
     <div>
-      <Label hint="optional">Lead-seal photo</Label>
+      <Label hint="required">Lead-seal photo</Label>
 
       <input
         ref={inputRef}
