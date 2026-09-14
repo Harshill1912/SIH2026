@@ -42,6 +42,7 @@ export default function GeoCapture({
   manualFix = null,
   manualLabel = "Use shop location",
   captureLabel = "Capture",
+  quick = false,
 }: {
   value: GeoFix | null;
   onChange: (fix: GeoFix | null) => void;
@@ -53,6 +54,8 @@ export default function GeoCapture({
   manualLabel?: string;
   /** Text of the button before any fix exists. */
   captureLabel?: string;
+  /** Take the first reading and finish — no accuracy sampling. Used for pinning premises. */
+  quick?: boolean;
 }) {
   const [status, setStatus] = useState<Status>(value ? "ok" : "idle");
   const [error, setError] = useState<string | null>(null);
@@ -102,7 +105,7 @@ export default function GeoCapture({
           best = pos;
           setLiveAccuracy(pos.coords.accuracy);
         }
-        if (pos.coords.accuracy <= GOOD_ACCURACY_M) stop(true);
+        if (quick || pos.coords.accuracy <= GOOD_ACCURACY_M) stop(true);
       },
       (err) => {
         lastErrorCode = err?.code;
@@ -135,7 +138,8 @@ export default function GeoCapture({
   };
 
   const listening = status === "locating";
-  const tooRough = value?.source === "device" && value.accuracyM != null && value.accuracyM > MAX_GPS_ACCURACY_M;
+  const tooRough =
+    !quick && value?.source === "device" && value.accuracyM != null && value.accuracyM > MAX_GPS_ACCURACY_M;
 
   return (
     <div>

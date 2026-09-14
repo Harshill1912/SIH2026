@@ -54,7 +54,7 @@ export async function POST(request: Request) {
     accuracyM: num("accuracyM"),
     source: body.source === "manual" ? ("manual" as const) : ("device" as const),
   };
-  const locationProblem = fixError(premises);
+  const locationProblem = fixError(premises, { checkAccuracy: false });
   if (locationProblem) {
     return NextResponse.json({ success: false, error: locationProblem, field: "location" }, { status: 400 });
   }

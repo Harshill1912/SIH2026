@@ -51,6 +51,14 @@ test("an imprecise GPS fix is refused even when it lands on the shop", () => {
   assert.match(fixError({ ...device(shop.lat, shop.lng), accuracyM: null }, opts)!, /accuracy is unknown/);
 });
 
+test("pinning premises saves the reading as given, however rough", () => {
+  const rough = device(shop.lat, shop.lng, 450);
+  assert.equal(fixError(rough, { ...opts, checkAccuracy: false }), null);
+  assert.equal(fixError({ ...rough, accuracyM: null }, { ...opts, checkAccuracy: false }), null);
+  // Still needs an actual location.
+  assert.notEqual(fixError(null, { ...opts, checkAccuracy: false }), null);
+});
+
 test("a hand-picked location is refused unless demo locations are switched on", () => {
   const manual = { lat: shop.lat, lng: shop.lng, accuracyM: null, source: "manual" as const };
   assert.equal(checkGeofence(manual, shop, opts).status, "bad-fix");

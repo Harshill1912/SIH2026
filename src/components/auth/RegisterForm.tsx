@@ -162,7 +162,7 @@ export default function RegisterForm({
     "aria-describedby": show(k) ? `${k}-error` : undefined,
   });
 
-  const locationProblem = fixError(premises);
+  const locationProblem = fixError(premises, { checkAccuracy: false });
   const locationShown = (touched.location ? locationProblem : null) ?? (badField === "location" ? error : null);
   const step1Ready = STEP_ONE_FIELDS.every((k) => !errors[k]) && !locationProblem;
   const step2Ready = STEP_TWO_FIELDS.every((k) => !errors[k]);
@@ -360,6 +360,7 @@ export default function RegisterForm({
                   <GeoCapture
                     label="Live location"
                     captureLabel="Use my live location"
+                    quick
                     autoLocate={false}
                     value={premises}
                     onChange={onPremisesFix}

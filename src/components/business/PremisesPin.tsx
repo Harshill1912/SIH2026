@@ -18,7 +18,7 @@ export default function PremisesPin({ onPinned }: { onPinned: () => void }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [detected, setDetected] = useState<string | null>(null);
-  const problem = fixError(fix);
+  const problem = fixError(fix, { checkAccuracy: false });
 
   const onFix = async (next: GeoFix | null) => {
     setFix(next);
@@ -67,6 +67,7 @@ export default function PremisesPin({ onPinned }: { onPinned: () => void }) {
             <GeoCapture
               label="Live location"
               captureLabel="Use my live location"
+              quick
               autoLocate={false}
               value={fix}
               onChange={onFix}

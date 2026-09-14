@@ -32,7 +32,7 @@ export async function POST(request: Request) {
     accuracyM: num("accuracyM"),
     source: body.source === "manual" ? ("manual" as const) : ("device" as const),
   };
-  const problem = fixError(fix);
+  const problem = fixError(fix, { checkAccuracy: false });
   if (problem) return NextResponse.json({ success: false, error: problem }, { status: 400 });
 
   // Conditional update: only succeeds while no pin exists, so two concurrent

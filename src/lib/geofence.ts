@@ -40,6 +40,8 @@ export interface GeofenceOptions {
   radiusM?: number;
   maxAccuracyM?: number;
   allowManual?: boolean;
+  /** False for pinning premises: the reading is saved as given, however rough. */
+  checkAccuracy?: boolean;
 }
 
 /** "35 m", "1.4 km". */
@@ -59,6 +61,7 @@ export function fixError(fix: LocationFix | null | undefined, opts: GeofenceOpti
   if (fix.source === "manual") {
     return allowManual ? null : "Location must come from this device's GPS, not be chosen by hand";
   }
+  if (opts.checkAccuracy === false) return null;
   if (fix.accuracyM == null || !Number.isFinite(fix.accuracyM) || fix.accuracyM <= 0) {
     return "GPS accuracy is unknown — capture the location again";
   }
