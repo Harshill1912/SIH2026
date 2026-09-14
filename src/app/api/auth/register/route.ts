@@ -3,6 +3,7 @@ import prisma from "@/lib/prisma";
 import { hashPassword } from "@/lib/password";
 import { sessionFromUser, setSessionCookie, signSession } from "@/lib/auth";
 import { clientKey, rateLimit, tooMany } from "@/lib/rate-limit";
+import { firstRegisterError, formatPhone, normalizeEmail } from "@/lib/validation";
 
 /**
  * Self-registration for a user of weights and measures. Creates the business
@@ -25,30 +26,31 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
   }
 
-  const str = (k: string) => (typeof body[k] === "string" ? (body[k] as string).trim() : "");
-  const businessName = str("businessName");
-  const regNo = str("regNo").toUpperCase();
-  const address = str("address");
-  const contact = str("contact");
-  const ownerName = str("ownerName");
-  const email = str("email").toLowerCase();
-  const password = typeof body.password === "string" ? (body.password as string) : "";
+  // Password is taken as sent — trimming it would silently change the secret.
+  const raw = (k: string) => (typeof body[k] === "string" ? (body[k] as string) : "");
+  const input = {
+    businessName: raw("businessName"),
+    regNo: raw("regNo"),
+    address: raw("address"),
+    contact: raw("contact"),
+    ownerName: raw("ownerName"),
+    email: raw("email"),
+    password: raw("password"),
+  };
 
-  const missing = Object.entries({ businessName, regNo, address, contact, ownerName, email, password })
-    .filter(([, v]) => !v)
-    .map(([k]) => k);
-  if (missing.length > 0) {
-    return NextResponse.json({ success: false, error: "All fields are required" }, { status: 400 });
+  // Same rules as the form, re-checked here: the form can be bypassed.
+  const invalid = firstRegisterError(input);
+  if (invalid) {
+    return NextResponse.json({ success: false, error: invalid.error, field: invalid.field }, { status: 400 });
   }
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
-    return NextResponse.json({ success: false, error: "Enter a valid email address" }, { status: 400 });
-  }
-  if (password.length < 8) {
-    return NextResponse.json(
-      { success: false, error: "Password must be at least 8 characters" },
-      { status: 400 }
-    );
-  }
+
+  const businessName = input.businessName.trim();
+  const regNo = input.regNo.trim().toUpperCase();
+  const address = input.address.trim();
+  const contact = formatPhone(input.contact);
+  const ownerName = input.ownerName.trim().replace(/\s+/g, " ");
+  const email = normalizeEmail(input.email);
+  const password = input.password;
 
   const [emailTaken, regTaken] = await Promise.all([
     prisma.user.findUnique({ where: { email }, select: { id: true } }),

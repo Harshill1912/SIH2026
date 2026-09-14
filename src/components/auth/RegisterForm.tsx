@@ -12,9 +12,31 @@ import {
   Lock,
   Check,
   Sparkles,
+  Eye,
+  EyeOff,
+  Circle,
 } from "lucide-react";
 import { Button, Label, Notice, cx } from "@/components/ui";
 import type { SessionUser } from "@/lib/session-types";
+import {
+  businessErrors,
+  loginErrors,
+  passwordRules,
+  type RegisterField,
+} from "@/lib/validation";
+
+const STEP_ONE_FIELDS: RegisterField[] = ["businessName", "regNo", "address", "contact"];
+const STEP_TWO_FIELDS: RegisterField[] = ["ownerName", "email", "password"];
+
+function FieldError({ id, message }: { id: string; message: string | null }) {
+  if (!message) return null;
+  return (
+    <p id={id} role="alert" className="mt-1.5 flex items-start gap-1.5 text-[12.5px] text-rose-700">
+      <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+      {message}
+    </p>
+  );
+}
 
 interface Fields {
   businessName: string;
@@ -51,6 +73,9 @@ export default function RegisterForm({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [badField, setBadField] = useState<string | null>(null);
+  /** Errors show only once a field has been left, or its step has been submitted. */
+  const [touched, setTouched] = useState<Partial<Record<RegisterField, boolean>>>({});
+  const [showPassword, setShowPassword] = useState(false);
 
   const quickFill = () => {
     const suffix = Math.floor(1000 + Math.random() * 9000);
@@ -58,30 +83,55 @@ export default function RegisterForm({
       businessName: "Verma Grocery & Mart",
       regNo: `VGM-DL-2026-${suffix}`,
       address: "Shop 28, Sector 14 Market, Rohini, New Delhi 110085",
-      contact: "+91 98711 22334",
+      contact: "9871122334",
       ownerName: "Sunil Verma",
       email: `trader.${suffix}@vermagrocery.in`,
-      password: "demo1234",
+      password: `Grocery#${suffix}Mart`,
     });
     setError(null);
     setBadField(null);
+    setTouched({});
   };
 
   const set = (k: keyof Fields) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    const v = k === "regNo" ? e.target.value.toUpperCase() : e.target.value;
+    let v = e.target.value;
+    if (k === "regNo") v = v.toUpperCase();
+    // The +91 is fixed beside the box, so the box itself only ever holds 10 digits.
+    if (k === "contact") v = v.replace(/\D/g, "").slice(0, 10);
     setF((prev) => ({ ...prev, [k]: v }));
-    if (badField === k) setBadField(null);
+    if (badField === k) {
+      setBadField(null);
+      setError(null);
+    }
   };
 
-  const step1Ready = f.businessName.trim() && f.regNo.trim() && f.address.trim() && f.contact.trim();
-  const step2Ready = f.ownerName.trim() && f.email.trim() && f.password.length >= 8;
+  const blur = (k: RegisterField) => () => setTouched((t) => ({ ...t, [k]: true }));
+
+  const errors: Record<RegisterField, string | null> = { ...businessErrors(f), ...loginErrors(f) };
+  const show = (k: RegisterField) => (touched[k] ? errors[k] : null);
+  const invalid = (k: RegisterField) => Boolean(show(k)) || badField === k;
+  const fieldClass = (k: RegisterField, extra = "") =>
+    cx("field", extra, invalid(k) && "border-rose-500 focus:border-rose-500");
+  const a11y = (k: RegisterField) => ({
+    "aria-invalid": invalid(k) || undefined,
+    "aria-describedby": show(k) ? `${k}-error` : undefined,
+  });
+
+  const step1Ready = STEP_ONE_FIELDS.every((k) => !errors[k]);
+  const step2Ready = STEP_TWO_FIELDS.every((k) => !errors[k]);
+  const rules = passwordRules(f.password);
+
+  const touchAll = (fields: RegisterField[]) =>
+    setTouched((t) => ({ ...t, ...Object.fromEntries(fields.map((k) => [k, true])) }));
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (step === 1) {
+      touchAll(STEP_ONE_FIELDS);
       if (step1Ready) setStep(2);
       return;
     }
+    touchAll(STEP_TWO_FIELDS);
     if (!step2Ready) return;
     setLoading(true);
     setError(null);
@@ -96,8 +146,8 @@ export default function RegisterForm({
       if (!res.ok || !data.success) {
         setError(data.error || "Registration failed");
         setBadField(data.field ?? null);
-        // A duplicate registration number belongs to step 1 — take them back.
-        if (data.field === "regNo") setStep(1);
+        // A server-side rejection of a step-one field — take them back to it.
+        if (STEP_ONE_FIELDS.includes(data.field)) setStep(1);
         return;
       }
       router.push("/");
@@ -181,7 +231,8 @@ export default function RegisterForm({
           </p>
         )}
 
-        <form onSubmit={submit} className="mt-6 space-y-4">
+        {/* noValidate: our inline messages replace the browser's tooltips. */}
+        <form onSubmit={submit} noValidate className="mt-6 space-y-4">
           {error && (
             <Notice tone="bad" icon={AlertCircle}>
               {error}
@@ -209,11 +260,15 @@ export default function RegisterForm({
                 <input
                   id="businessName"
                   required
+                  maxLength={120}
                   value={f.businessName}
                   onChange={set("businessName")}
+                  onBlur={blur("businessName")}
                   placeholder="ABC Traders"
-                  className="field"
+                  className={fieldClass("businessName")}
+                  {...a11y("businessName")}
                 />
+                <FieldError id="businessName-error" message={show("businessName")} />
               </div>
               <div>
                 <Label htmlFor="regNo" hint="trade / GST registration">
@@ -222,11 +277,15 @@ export default function RegisterForm({
                 <input
                   id="regNo"
                   required
+                  maxLength={30}
                   value={f.regNo}
                   onChange={set("regNo")}
+                  onBlur={blur("regNo")}
                   placeholder="ABC-DL-2024-9871"
-                  className={cx("field font-mono", badField === "regNo" && "border-rose-500")}
+                  className={fieldClass("regNo", "font-mono")}
+                  {...a11y("regNo")}
                 />
+                <FieldError id="regNo-error" message={show("regNo")} />
               </div>
               <div>
                 <Label htmlFor="address">Premises address</Label>
@@ -234,24 +293,45 @@ export default function RegisterForm({
                   id="address"
                   required
                   rows={2}
+                  maxLength={300}
                   value={f.address}
                   onChange={set("address")}
+                  onBlur={blur("address")}
                   placeholder="Shop 14, Main Market, Connaught Place, New Delhi 110001"
-                  className="field resize-y"
+                  className={fieldClass("address", "resize-y")}
+                  {...a11y("address")}
                 />
+                <FieldError id="address-error" message={show("address")} />
               </div>
               <div>
-                <Label htmlFor="contact">Contact number</Label>
-                <input
-                  id="contact"
-                  required
-                  value={f.contact}
-                  onChange={set("contact")}
-                  placeholder="+91 98765 43210"
-                  className="field"
-                />
+                <Label htmlFor="contact" hint="10-digit mobile, for SMS reminders">
+                  Mobile number
+                </Label>
+                <div className="relative">
+                  <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-[14px] font-medium text-ink-500">
+                    +91
+                  </span>
+                  <input
+                    id="contact"
+                    required
+                    type="tel"
+                    inputMode="numeric"
+                    autoComplete="tel-national"
+                    maxLength={10}
+                    value={f.contact}
+                    onChange={set("contact")}
+                    onBlur={blur("contact")}
+                    placeholder="98765 43210"
+                    className={fieldClass("contact", "pl-12 font-mono tracking-wide")}
+                    {...a11y("contact")}
+                  />
+                  <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3 text-xs tnum text-ink-400">
+                    {f.contact.length}/10
+                  </span>
+                </div>
+                <FieldError id="contact-error" message={show("contact")} />
               </div>
-              <Button type="submit" size="lg" className="w-full" iconRight={ArrowRight} disabled={!step1Ready}>
+              <Button type="submit" size="lg" className="w-full" iconRight={ArrowRight}>
                 Continue
               </Button>
             </>
@@ -276,39 +356,77 @@ export default function RegisterForm({
                 <input
                   id="ownerName"
                   required
+                  autoComplete="name"
+                  maxLength={80}
                   value={f.ownerName}
                   onChange={set("ownerName")}
+                  onBlur={blur("ownerName")}
                   placeholder="Ramesh Gupta"
-                  className="field"
+                  className={fieldClass("ownerName")}
+                  {...a11y("ownerName")}
                 />
+                <FieldError id="ownerName-error" message={show("ownerName")} />
               </div>
               <div>
                 <Label htmlFor="email">Email</Label>
                 <input
                   id="email"
                   type="email"
+                  inputMode="email"
                   autoComplete="username"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   required
+                  maxLength={254}
                   value={f.email}
                   onChange={set("email")}
+                  onBlur={blur("email")}
                   placeholder="owner@abctraders.in"
-                  className={cx("field", badField === "email" && "border-rose-500")}
+                  className={fieldClass("email")}
+                  {...a11y("email")}
                 />
+                <FieldError id="email-error" message={show("email")} />
               </div>
               <div>
-                <Label htmlFor="password" hint="at least 8 characters">
-                  Password
-                </Label>
-                <input
-                  id="password"
-                  type="password"
-                  autoComplete="new-password"
-                  required
-                  minLength={8}
-                  value={f.password}
-                  onChange={set("password")}
-                  placeholder="••••••••"
-                  className="field"
+                <Label htmlFor="password">Password</Label>
+                <div className="relative">
+                  <input
+                    id="password"
+                    type={showPassword ? "text" : "password"}
+                    autoComplete="new-password"
+                    required
+                    maxLength={128}
+                    value={f.password}
+                    onChange={set("password")}
+                    onBlur={blur("password")}
+                    placeholder="••••••••"
+                    className={fieldClass("password", "pr-11")}
+                    {...a11y("password")}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                    className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-ink-400 hover:text-ink-700 focus-ring"
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+                <ul className="mt-2 grid grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-2" aria-label="Password requirements">
+                  {rules.map((r) => (
+                    <li
+                      key={r.key}
+                      className={cx("flex items-center gap-1.5 text-[12.5px]", r.ok ? "text-seal-700" : "text-ink-500")}
+                    >
+                      {r.ok ? <Check className="h-3.5 w-3.5 shrink-0" /> : <Circle className="h-3 w-3 shrink-0" />}
+                      {r.label}
+                    </li>
+                  ))}
+                </ul>
+                {/* The checklist covers the character rules; this catches the rest (common, contains your name). */}
+                <FieldError
+                  id="password-error"
+                  message={touched.password && rules.every((r) => r.ok) ? errors.password : null}
                 />
               </div>
               <div className="flex gap-2">
@@ -321,7 +439,6 @@ export default function RegisterForm({
                   className="flex-1"
                   icon={UserPlus}
                   loading={loading}
-                  disabled={!step2Ready}
                 >
                   Create account
                 </Button>
