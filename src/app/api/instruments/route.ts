@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireSession } from "@/lib/auth";
+import { firstInstrumentError, normalizeSerial } from "@/lib/instrument-validation";
 
 export async function GET(request: Request) {
   const auth = await requireSession();
@@ -125,11 +126,19 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { serialNumber, category, model, capacity, location } = body;
+    const raw = (k: string) => (typeof body[k] === "string" ? (body[k] as string) : "");
+    const input = {
+      serialNumber: raw("serialNumber"),
+      category: raw("category"),
+      model: raw("model"),
+      capacity: raw("capacity"),
+      location: raw("location"),
+    };
 
-    if (!serialNumber || !category || !model || !capacity) {
+    const invalid = firstInstrumentError(input);
+    if (invalid) {
       return NextResponse.json(
-        { success: false, error: "Serial number, category, model, and capacity are required" },
+        { success: false, error: invalid.error, field: invalid.field },
         { status: 400 }
       );
     }
@@ -155,25 +164,27 @@ export async function POST(request: Request) {
       );
     }
 
+    const cleanSerial = normalizeSerial(input.serialNumber);
+
     // Check serial uniqueness
     const existing = await prisma.instrument.findUnique({
-      where: { serialNumber },
+      where: { serialNumber: cleanSerial },
     });
 
     if (existing) {
       return NextResponse.json(
-        { success: false, error: `Instrument with Serial Number ${serialNumber} already exists` },
+        { success: false, error: `Instrument with Serial Number ${cleanSerial} already exists` },
         { status: 409 }
       );
     }
 
     const instrument = await prisma.instrument.create({
       data: {
-        serialNumber: serialNumber.trim().toUpperCase(),
-        category,
-        model: model.trim(),
-        capacity: capacity.trim(),
-        location: location ? location.trim() : "Main Branch",
+        serialNumber: cleanSerial,
+        category: input.category.trim(),
+        model: input.model.trim(),
+        capacity: input.capacity.trim(),
+        location: input.location.trim() || "Main Branch",
         businessId: targetBusinessId,
       },
     });

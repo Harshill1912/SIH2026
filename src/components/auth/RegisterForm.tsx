@@ -15,20 +15,13 @@ import {
   Eye,
   EyeOff,
   Circle,
+  LocateFixed,
+  MapPin,
 } from "lucide-react";
 import { Button, Label, Notice, cx } from "@/components/ui";
 import type { SessionUser } from "@/lib/session-types";
-import GeoCapture from "@/components/officer/GeoCapture";
-import type { GeoFix } from "@/lib/geo";
-import { GEOFENCE_RADIUS_M, fixError, formatDistance } from "@/lib/geofence";
-import { lookupAddress } from "@/lib/address";
-
-type AddressLookupState =
-  | { status: "idle" }
-  | { status: "loading" }
-  | { status: "filled" }
-  | { status: "suggested"; address: string }
-  | { status: "error"; message: string };
+import { formatGeo, geoErrorMessage, type GeoFix } from "@/lib/geo";
+import { fixError } from "@/lib/geofence";
 
 /** Demo-mode stand-in for the quick-fill trader's shop in Rohini. */
 const DEMO_PREMISES = { lat: 28.7353, lng: 77.118 };
@@ -91,35 +84,36 @@ export default function RegisterForm({
   const [touched, setTouched] = useState<Partial<Record<RegisterField | "location", boolean>>>({});
   const [showPassword, setShowPassword] = useState(false);
   const [premises, setPremises] = useState<GeoFix | null>(null);
-  const [lookup, setLookup] = useState<AddressLookupState>({ status: "idle" });
-  /** Increments per capture, so a slow lookup can't overwrite a newer one. */
-  const lookupSeq = useRef(0);
+  const [locating, setLocating] = useState(false);
+  const [locError, setLocError] = useState<string | null>(null);
 
-  const applyDetectedAddress = (address: string) => {
-    setF((prev) => ({ ...prev, address }));
-    setTouched((t) => ({ ...t, address: true }));
-    setLookup({ status: "filled" });
-  };
-
-  const onPremisesFix = async (fix: GeoFix | null) => {
-    setPremises(fix);
-    if (badField === "location") {
-      setBadField(null);
-      setError(null);
-    }
-    if (!fix) {
-      setLookup({ status: "idle" });
+  const fetchLiveLocation = () => {
+    if (typeof navigator === "undefined" || !("geolocation" in navigator)) {
+      setLocError("Location is not supported by your browser");
       return;
     }
-    const seq = ++lookupSeq.current;
-    // Decided now: an address the trader already typed is never overwritten silently.
-    const addressWasEmpty = !f.address.trim();
-    setLookup({ status: "loading" });
-    const result = await lookupAddress(fix.lat, fix.lng);
-    if (seq !== lookupSeq.current) return;
-    if (!result.ok) setLookup({ status: "error", message: result.error });
-    else if (addressWasEmpty) applyDetectedAddress(result.address);
-    else setLookup({ status: "suggested", address: result.address });
+    setLocating(true);
+    setLocError(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLocating(false);
+        setPremises({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracyM: pos.coords.accuracy ?? null,
+          source: "device",
+        });
+        if (badField === "location") {
+          setBadField(null);
+          setError(null);
+        }
+      },
+      (err) => {
+        setLocating(false);
+        setLocError(geoErrorMessage(err.code));
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
   };
 
   const quickFill = () => {
@@ -133,6 +127,7 @@ export default function RegisterForm({
       email: `trader.${suffix}@vermagrocery.in`,
       password: `Grocery#${suffix}Mart`,
     });
+    setPremises({ lat: DEMO_PREMISES.lat, lng: DEMO_PREMISES.lng, accuracyM: 10, source: "manual" });
     setError(null);
     setBadField(null);
     setTouched({});
@@ -162,19 +157,18 @@ export default function RegisterForm({
     "aria-describedby": show(k) ? `${k}-error` : undefined,
   });
 
-  const locationProblem = fixError(premises, { checkAccuracy: false });
-  const locationShown = (touched.location ? locationProblem : null) ?? (badField === "location" ? error : null);
+  const locationProblem = premises ? fixError(premises, { checkAccuracy: false }) : null;
   const step1Ready = STEP_ONE_FIELDS.every((k) => !errors[k]) && !locationProblem;
   const step2Ready = STEP_TWO_FIELDS.every((k) => !errors[k]);
   const rules = passwordRules(f.password);
 
-  const touchAll = (fields: Array<RegisterField | "location">) =>
+  const touchAll = (fields: Array<RegisterField>) =>
     setTouched((t) => ({ ...t, ...Object.fromEntries(fields.map((k) => [k, true])) }));
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (step === 1) {
-      touchAll([...STEP_ONE_FIELDS, "location"]);
+      touchAll(STEP_ONE_FIELDS);
       if (step1Ready) setStep(2);
       return;
     }
@@ -341,7 +335,27 @@ export default function RegisterForm({
                 <FieldError id="regNo-error" message={show("regNo")} />
               </div>
               <div>
-                <Label htmlFor="address">Premises address</Label>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="address">Premises address</Label>
+                  <button
+                    type="button"
+                    onClick={fetchLiveLocation}
+                    disabled={locating}
+                    className="inline-flex items-center gap-1.5 text-xs font-medium text-seal-700 hover:text-seal-800 transition focus-ring rounded-md px-1.5 py-0.5"
+                  >
+                    {locating ? (
+                      <>
+                        <span className="h-3 w-3 animate-spin rounded-full border-2 border-seal-600 border-t-transparent" />
+                        Fetching GPS…
+                      </>
+                    ) : (
+                      <>
+                        <LocateFixed className="h-3.5 w-3.5 text-seal-600" />
+                        {premises ? "Re-fetch live location" : "Use live location"}
+                      </>
+                    )}
+                  </button>
+                </div>
                 <textarea
                   id="address"
                   required
@@ -356,48 +370,33 @@ export default function RegisterForm({
                 />
                 <FieldError id="address-error" message={show("address")} />
 
-                <div className="mt-3">
-                  <GeoCapture
-                    label="Live location"
-                    captureLabel="Use my live location"
-                    quick
-                    autoLocate={false}
-                    value={premises}
-                    onChange={onPremisesFix}
-                    manualFix={DEMO_PREMISES}
-                    manualLabel="Use demo location"
-                  />
-                  {lookup.status === "loading" && (
-                    <p className="mt-1.5 text-[12.5px] text-ink-500">Looking up the address at this location…</p>
-                  )}
-                  {lookup.status === "filled" && (
-                    <p className="mt-1.5 flex items-start gap-1.5 text-[12.5px] text-seal-800">
-                      <Check className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                      Address filled from your location — check it and add the shop number if missing.
-                    </p>
-                  )}
-                  {lookup.status === "suggested" && (
-                    <div className="mt-1.5 rounded-lg border border-line bg-ink-50/60 px-3 py-2 text-[12.5px] text-ink-700">
-                      Detected here: <span className="text-ink-900">{lookup.address}</span>{" "}
-                      <button
-                        type="button"
-                        onClick={() => applyDetectedAddress(lookup.address)}
-                        className="font-medium text-seal-700 hover:text-seal-800 hover:underline"
-                      >
-                        Use this address
-                      </button>
-                    </div>
-                  )}
-                  {lookup.status === "error" && (
-                    <p className="mt-1.5 text-[12.5px] text-amber-800">{lookup.message}</p>
-                  )}
-                  <p className="mt-1.5 text-[12px] text-ink-500">
-                    Do this while standing at your premises. Verification officers must be on site — within{" "}
-                    {formatDistance(GEOFENCE_RADIUS_M)} of this point — to certify your instruments.
-                    {(lookup.status === "filled" || lookup.status === "suggested") && " Address data © OpenStreetMap contributors."}
+                {premises && (
+                  <div className="mt-2 flex items-center justify-between gap-2 rounded-lg border border-seal-200 bg-seal-50/70 px-3 py-2 text-[12.5px] text-seal-900">
+                    <span className="inline-flex items-center gap-1.5">
+                      <MapPin className="h-3.5 w-3.5 text-seal-700 shrink-0" />
+                      <span>
+                        Live location attached: <span className="font-mono font-medium">{formatGeo(premises)}</span>
+                        {premises.accuracyM != null && (
+                          <span className="text-seal-700/80"> (±{Math.round(premises.accuracyM)} m)</span>
+                        )}
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setPremises(null)}
+                      className="text-[11.5px] font-medium text-seal-700 hover:text-seal-900 hover:underline"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                )}
+
+                {locError && (
+                  <p className="mt-1.5 flex items-center gap-1.5 text-[12.5px] text-amber-800">
+                    <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                    {locError}
                   </p>
-                  <FieldError id="location-error" message={locationShown} />
-                </div>
+                )}
               </div>
               <div>
                 <Label htmlFor="contact" hint="10-digit mobile, for SMS reminders">

@@ -3,6 +3,12 @@
 import React, { useState } from "react";
 import { PackagePlus, AlertCircle, Zap } from "lucide-react";
 import { Button, Label, Modal, Notice, cx } from "@/components/ui";
+import {
+  INSTRUMENT_CATEGORIES,
+  instrumentErrors,
+  firstInstrumentError,
+  type InstrumentField,
+} from "@/lib/instrument-validation";
 
 interface RegisterInstrumentModalProps {
   isOpen: boolean;
@@ -12,14 +18,7 @@ interface RegisterInstrumentModalProps {
   businessLabel?: string;
 }
 
-const CATEGORIES = [
-  "Electronic Counter Scale",
-  "Weighbridge (Heavy Vehicle)",
-  "Fuel Dispenser (Petrol/Diesel)",
-  "Platform Scale (Industrial)",
-  "Automatic Gravimetric Filling",
-  "Commercial Length & Linear Measure",
-];
+const CATEGORIES = INSTRUMENT_CATEGORIES;
 
 const PRESETS = [
   {
@@ -48,6 +47,16 @@ const PRESETS = [
   },
 ];
 
+function FieldError({ id, message }: { id: string; message: string | null }) {
+  if (!message) return null;
+  return (
+    <p id={id} role="alert" className="mt-1.5 flex items-start gap-1.5 text-[12px] text-rose-700">
+      <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+      {message}
+    </p>
+  );
+}
+
 /** Three-digit suffix so repeated demo runs never collide on the unique serial. */
 const randomSuffix = () => Math.floor(100 + Math.random() * 900);
 
@@ -58,13 +67,30 @@ export default function RegisterInstrumentModal({
   businessLabel,
 }: RegisterInstrumentModalProps) {
   const [serialNumber, setSerialNumber] = useState("");
-  const [category, setCategory] = useState(CATEGORIES[0]);
+  const [category, setCategory] = useState<string>(CATEGORIES[0]);
   const [model, setModel] = useState("");
   const [capacity, setCapacity] = useState("");
   const [location, setLocation] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [badField, setBadField] = useState<string | null>(null);
+  const [touched, setTouched] = useState<Partial<Record<InstrumentField, boolean>>>({});
   const [activePreset, setActivePreset] = useState<string | null>(null);
+
+  const errors = instrumentErrors({ serialNumber, category, model, capacity, location });
+  const show = (k: InstrumentField) => (touched[k] ? errors[k] : null);
+  const invalid = (k: InstrumentField) => Boolean(show(k)) || badField === k;
+  const fieldClass = (k: InstrumentField, extra = "") =>
+    cx("field", extra, invalid(k) && "border-rose-500 focus:border-rose-500");
+
+  const blur = (k: InstrumentField) => () => setTouched((t) => ({ ...t, [k]: true }));
+
+  const clearBad = (k: string) => {
+    if (badField === k) {
+      setBadField(null);
+      setError(null);
+    }
+  };
 
   const applyPreset = (p: (typeof PRESETS)[number]) => {
     setCategory(p.category);
@@ -74,6 +100,8 @@ export default function RegisterInstrumentModal({
     setLocation(p.location);
     setActivePreset(p.label);
     setError(null);
+    setBadField(null);
+    setTouched({});
   };
 
   const reset = () => {
@@ -83,12 +111,32 @@ export default function RegisterInstrumentModal({
     setLocation("");
     setActivePreset(null);
     setError(null);
+    setBadField(null);
+    setTouched({});
   };
+
+  const touchAll = () =>
+    setTouched({
+      serialNumber: true,
+      category: true,
+      model: true,
+      capacity: true,
+      location: true,
+    });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    touchAll();
+    const firstErr = firstInstrumentError({ serialNumber, category, model, capacity, location });
+    if (firstErr) {
+      setError(firstErr.error);
+      setBadField(firstErr.field);
+      return;
+    }
+
     setLoading(true);
     setError(null);
+    setBadField(null);
     try {
       const res = await fetch("/api/instruments", {
         method: "POST",
@@ -98,6 +146,7 @@ export default function RegisterInstrumentModal({
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
+        setBadField(data.field ?? null);
         throw new Error(data.error || "Failed to register instrument");
       }
       onSuccess();
@@ -109,6 +158,14 @@ export default function RegisterInstrumentModal({
       setLoading(false);
     }
   };
+
+  const isVolume = category.toLowerCase().includes("fuel") || category.toLowerCase().includes("dispenser");
+  const isLength = category.toLowerCase().includes("length") || category.toLowerCase().includes("linear");
+  const capacityHint = isVolume
+    ? "e.g. 45 L/min or 50 L"
+    : isLength
+      ? "e.g. 30 m or 100 cm"
+      : "e.g. 15 kg / 1 g or 60 tonnes";
 
   return (
     <Modal
@@ -167,19 +224,31 @@ export default function RegisterInstrumentModal({
               id="serial"
               type="text"
               required
+              maxLength={30}
               value={serialNumber}
-              onChange={(e) => setSerialNumber(e.target.value.toUpperCase())}
+              onChange={(e) => {
+                setSerialNumber(e.target.value.toUpperCase());
+                clearBad("serialNumber");
+              }}
+              onBlur={blur("serialNumber")}
               placeholder="SCALE-2024-002"
-              className="field font-mono"
+              className={fieldClass("serialNumber", "font-mono")}
+              aria-invalid={invalid("serialNumber") || undefined}
+              aria-describedby={show("serialNumber") ? "serial-error" : undefined}
             />
+            <FieldError id="serial-error" message={show("serialNumber")} />
           </div>
           <div>
             <Label htmlFor="category">Category</Label>
             <select
               id="category"
               value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              className="field"
+              onChange={(e) => {
+                setCategory(e.target.value);
+                clearBad("category");
+              }}
+              onBlur={blur("category")}
+              className={fieldClass("category")}
             >
               {CATEGORIES.map((c) => (
                 <option key={c} value={c}>
@@ -187,6 +256,7 @@ export default function RegisterInstrumentModal({
                 </option>
               ))}
             </select>
+            <FieldError id="category-error" message={show("category")} />
           </div>
         </div>
 
@@ -197,25 +267,41 @@ export default function RegisterInstrumentModal({
               id="model"
               type="text"
               required
+              maxLength={60}
               value={model}
-              onChange={(e) => setModel(e.target.value)}
+              onChange={(e) => {
+                setModel(e.target.value);
+                clearBad("model");
+              }}
+              onBlur={blur("model")}
               placeholder="Essae DS-215 Precision"
-              className="field"
+              className={fieldClass("model")}
+              aria-invalid={invalid("model") || undefined}
+              aria-describedby={show("model") ? "model-error" : undefined}
             />
+            <FieldError id="model-error" message={show("model")} />
           </div>
           <div>
-            <Label htmlFor="capacity" hint="max / division">
+            <Label htmlFor="capacity" hint={capacityHint}>
               Capacity
             </Label>
             <input
               id="capacity"
               type="text"
               required
+              maxLength={50}
               value={capacity}
-              onChange={(e) => setCapacity(e.target.value)}
-              placeholder="50 kg / 1 g"
-              className="field"
+              onChange={(e) => {
+                setCapacity(e.target.value);
+                clearBad("capacity");
+              }}
+              onBlur={blur("capacity")}
+              placeholder={isVolume ? "45 L/min" : isLength ? "30 m" : "50 kg / 1 g"}
+              className={fieldClass("capacity")}
+              aria-invalid={invalid("capacity") || undefined}
+              aria-describedby={show("capacity") ? "capacity-error" : undefined}
             />
+            <FieldError id="capacity-error" message={show("capacity")} />
           </div>
         </div>
 
@@ -226,11 +312,19 @@ export default function RegisterInstrumentModal({
           <input
             id="location"
             type="text"
+            maxLength={80}
             value={location}
-            onChange={(e) => setLocation(e.target.value)}
+            onChange={(e) => {
+              setLocation(e.target.value);
+              clearBad("location");
+            }}
+            onBlur={blur("location")}
             placeholder="Counter 2 – Retail billing"
-            className="field"
+            className={fieldClass("location")}
+            aria-invalid={invalid("location") || undefined}
+            aria-describedby={show("location") ? "location-error" : undefined}
           />
+          <FieldError id="location-error" message={show("location")} />
         </div>
       </form>
     </Modal>
