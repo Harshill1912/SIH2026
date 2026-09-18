@@ -113,9 +113,15 @@ export default function RegisterForm({
           if (res.ok && res.address) {
             setF((prev) => ({ ...prev, address: res.address }));
             setTouched((t) => ({ ...t, address: true }));
+          } else {
+            const fallback = `${fix.lat.toFixed(5)}° N, ${fix.lng.toFixed(5)}° E`;
+            setF((prev) => ({ ...prev, address: prev.address.trim() || fallback }));
+            setTouched((t) => ({ ...t, address: true }));
           }
         } catch {
-          // Coordinates remain attached even if reverse geocode fails
+          const fallback = `${fix.lat.toFixed(5)}° N, ${fix.lng.toFixed(5)}° E`;
+          setF((prev) => ({ ...prev, address: prev.address.trim() || fallback }));
+          setTouched((t) => ({ ...t, address: true }));
         } finally {
           setLocating(false);
         }
@@ -358,12 +364,17 @@ export default function RegisterForm({
                     {locating ? (
                       <>
                         <span className="h-3 w-3 animate-spin rounded-full border-2 border-seal-600 border-t-transparent" />
-                        Fetching GPS…
+                        Fetching location…
+                      </>
+                    ) : premises ? (
+                      <>
+                        <Check className="h-3.5 w-3.5 text-seal-600" />
+                        Re-fetch live location
                       </>
                     ) : (
                       <>
                         <LocateFixed className="h-3.5 w-3.5 text-seal-600" />
-                        {premises ? "Re-fetch live location" : "Use live location"}
+                        Fetch live location
                       </>
                     )}
                   </button>
@@ -381,24 +392,6 @@ export default function RegisterForm({
                   {...a11y("address")}
                 />
                 <FieldError id="address-error" message={show("address")} />
-
-                {premises && (
-                  <div className="mt-2 flex items-center justify-between gap-2 rounded-lg border border-seal-200 bg-seal-50/70 px-3 py-2 text-[12.5px] text-seal-900">
-                    <span className="inline-flex items-center gap-1.5 min-w-0">
-                      <MapPin className="h-3.5 w-3.5 text-seal-700 shrink-0" />
-                      <span className="truncate">
-                        Live location attached: <span className="font-mono font-medium">{formatGeo(premises)}</span>
-                      </span>
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setPremises(null)}
-                      className="text-[11.5px] font-medium text-seal-700 hover:text-seal-900 hover:underline shrink-0"
-                    >
-                      Clear
-                    </button>
-                  </div>
-                )}
 
                 {locError && (
                   <p className="mt-1.5 flex items-center gap-1.5 text-[12.5px] text-amber-800">
