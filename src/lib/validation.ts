@@ -148,8 +148,17 @@ export function nameError(raw: string, what: "Your name" | "Business name"): str
   if (what === "Your name" && !/^[\p{L}][\p{L} .'-]*$/u.test(v)) {
     return "Name can only contain letters, spaces, dots, apostrophes and hyphens";
   }
+  if (what === "Business name") {
+    if (!/\p{L}/u.test(v)) {
+      return "Business name must contain letters, not only numbers or symbols";
+    }
+    if (/^(.)\1+$/.test(v)) {
+      return "Enter a realistic business name, not repeated characters";
+    }
+  }
   return null;
 }
+
 
 export function regNoError(raw: string): string | null {
   const v = raw.trim();

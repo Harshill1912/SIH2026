@@ -4,6 +4,7 @@ import {
   emailError,
   firstRegisterError,
   formatPhone,
+  nameError,
   normalizeEmail,
   passwordError,
   passwordRules,
@@ -90,4 +91,25 @@ test("firstRegisterError reports the first failing field in form order", () => {
   assert.equal(firstRegisterError({ ...good, email: "nope", password: "weak" })!.field, "email");
   assert.equal(firstRegisterError({ ...good, ownerName: "R2D2" })!.field, "ownerName");
   assert.equal(firstRegisterError({ ...good, regNo: "AB<script>" })!.field, "regNo");
+  assert.equal(firstRegisterError({ ...good, businessName: "1234" })!.field, "businessName");
 });
+
+test("nameError: enforces realistic personal and business names", () => {
+  // Business name tests
+  assert.equal(nameError("Verma Grocery & Mart", "Business name"), null);
+  assert.equal(nameError("7-Eleven Supermarket", "Business name"), null);
+  assert.equal(nameError("Shop 24", "Business name"), null);
+
+  assert.notEqual(nameError("1234", "Business name"), null, "should reject pure digits");
+  assert.notEqual(nameError("111", "Business name"), null, "should reject repeated digits");
+  assert.notEqual(nameError("---", "Business name"), null, "should reject pure symbols");
+  assert.notEqual(nameError("1", "Business name"), null, "should reject single character");
+  assert.notEqual(nameError("", "Business name"), null, "should reject empty");
+
+  // Personal name tests
+  assert.equal(nameError("Sunil Verma", "Your name"), null);
+  assert.equal(nameError("Mary-Jane O'Connor", "Your name"), null);
+  assert.notEqual(nameError("Sunil123", "Your name"), null);
+  assert.notEqual(nameError("1234", "Your name"), null);
+});
+
