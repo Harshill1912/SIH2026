@@ -1,4 +1,5 @@
 import PublicVerificationPortal from "@/components/public/PublicVerificationPortal";
+import { generateDemoTokens } from "@/lib/demoTokens";
 
 export const metadata = { title: "Verify a certificate" };
 
@@ -8,9 +9,11 @@ export const metadata = { title: "Verify a certificate" };
  * internal workflow strip belongs on the staff dashboards, not here.
  */
 export default function VerifyPortalPage() {
+  const demoTokens = generateDemoTokens();
   return (
     <div className="py-4">
-      <PublicVerificationPortal />
+      <PublicVerificationPortal demoTokens={demoTokens} />
     </div>
   );
 }
+
