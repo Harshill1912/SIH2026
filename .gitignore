@@ -23,6 +23,8 @@
 # misc
 .DS_Store
 *.pem
+*.pdf
+CLAUDE.md
 
 # debug
 npm-debug.log*
