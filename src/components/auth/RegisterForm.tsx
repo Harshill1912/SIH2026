@@ -22,6 +22,7 @@ import { Button, Label, Notice, cx } from "@/components/ui";
 import type { SessionUser } from "@/lib/session-types";
 import { formatGeo, geoErrorMessage, type GeoFix } from "@/lib/geo";
 import { fixError } from "@/lib/geofence";
+import { lookupAddress } from "@/lib/address";
 
 /** Demo-mode stand-in for the quick-fill trader's shop in Rohini. */
 const DEMO_PREMISES = { lat: 28.7353, lng: 77.118 };
@@ -95,17 +96,28 @@ export default function RegisterForm({
     setLocating(true);
     setLocError(null);
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setLocating(false);
-        setPremises({
+      async (pos) => {
+        const fix: GeoFix = {
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
           accuracyM: pos.coords.accuracy ?? null,
           source: "device",
-        });
-        if (badField === "location") {
+        };
+        setPremises(fix);
+        if (badField === "location" || badField === "address") {
           setBadField(null);
           setError(null);
+        }
+        try {
+          const res = await lookupAddress(fix.lat, fix.lng);
+          if (res.ok && res.address) {
+            setF((prev) => ({ ...prev, address: res.address }));
+            setTouched((t) => ({ ...t, address: true }));
+          }
+        } catch {
+          // Coordinates remain attached even if reverse geocode fails
+        } finally {
+          setLocating(false);
         }
       },
       (err) => {
@@ -372,19 +384,16 @@ export default function RegisterForm({
 
                 {premises && (
                   <div className="mt-2 flex items-center justify-between gap-2 rounded-lg border border-seal-200 bg-seal-50/70 px-3 py-2 text-[12.5px] text-seal-900">
-                    <span className="inline-flex items-center gap-1.5">
+                    <span className="inline-flex items-center gap-1.5 min-w-0">
                       <MapPin className="h-3.5 w-3.5 text-seal-700 shrink-0" />
-                      <span>
+                      <span className="truncate">
                         Live location attached: <span className="font-mono font-medium">{formatGeo(premises)}</span>
-                        {premises.accuracyM != null && (
-                          <span className="text-seal-700/80"> (±{Math.round(premises.accuracyM)} m)</span>
-                        )}
                       </span>
                     </span>
                     <button
                       type="button"
                       onClick={() => setPremises(null)}
-                      className="text-[11.5px] font-medium text-seal-700 hover:text-seal-900 hover:underline"
+                      className="text-[11.5px] font-medium text-seal-700 hover:text-seal-900 hover:underline shrink-0"
                     >
                       Clear
                     </button>
