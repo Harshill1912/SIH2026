@@ -5,6 +5,7 @@ import { sessionFromUser, setSessionCookie, signSession } from "@/lib/auth";
 import { clientKey, rateLimit, tooMany } from "@/lib/rate-limit";
 import { firstRegisterError, formatPhone, normalizeEmail } from "@/lib/validation";
 import { fixError } from "@/lib/geofence";
+import { resolvePremisesCoordinates } from "@/lib/address";
 
 /**
  * Self-registration for a user of weights and measures. Creates the business
@@ -89,12 +90,20 @@ export async function POST(request: Request) {
     );
   }
 
+  let finalLat = premises?.lat ?? null;
+  let finalLng = premises?.lng ?? null;
+  if (finalLat == null || finalLng == null) {
+    const coords = await resolvePremisesCoordinates(address);
+    finalLat = coords.lat;
+    finalLng = coords.lng;
+  }
+
   try {
     // Business and its first login are created together: a business with no way
     // to sign in, or a login with no business, would both be dead records.
     const user = await prisma.$transaction(async (tx) => {
       const business = await tx.business.create({
-        data: { name: businessName, regNo, address, contact, lat: premises?.lat ?? null, lng: premises?.lng ?? null },
+        data: { name: businessName, regNo, address, contact, lat: finalLat, lng: finalLng },
       });
       return tx.user.create({
         data: {

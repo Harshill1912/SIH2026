@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ADDRESS_MAX, formatPremisesAddress } from "../src/lib/address";
+import { ADDRESS_MAX, formatPremisesAddress, resolvePremisesCoordinates } from "../src/lib/address";
 
 /*
  * The detected address pre-fills a legal registration record, so it must read
@@ -58,3 +58,10 @@ test("an empty result gives an empty address, and long ones are capped", () => {
   assert.equal(formatPremisesAddress({}), "");
   assert.ok(formatPremisesAddress({ road: "x".repeat(400) }).length <= ADDRESS_MAX);
 });
+
+test("resolvePremisesCoordinates returns fallback coordinates for empty or failed address lookup", async () => {
+  const empty = await resolvePremisesCoordinates("");
+  assert.equal(empty.lat, 28.6328);
+  assert.equal(empty.lng, 77.2197);
+});
+

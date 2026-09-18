@@ -76,3 +76,39 @@ export async function lookupAddress(lat: number, lng: number): Promise<AddressLo
     return { ok: false, error: "Couldn't look up the address — check your connection, or type it in" };
   }
 }
+
+/**
+ * Forward geocoding to resolve a street address into coordinates for geofencing.
+ * Falls back to demo coordinates (Central Delhi) if network or geocoding is unavailable.
+ */
+export async function resolvePremisesCoordinates(address: string): Promise<{ lat: number; lng: number }> {
+  const clean = (address || "").trim();
+  const fallback = { lat: 28.6328, lng: 77.2197 };
+  if (!clean) return fallback;
+
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&q=${encodeURIComponent(clean)}&countrycodes=in&limit=1`;
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "e-Metrology/1.0 (SIH26036 legal metrology prototype; https://github.com/Harshill1912/SIH2026)",
+        "Accept-Language": "en-IN,en",
+      },
+      signal: AbortSignal.timeout(3500),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0 && data[0]?.lat && data[0]?.lon) {
+        const lat = parseFloat(data[0].lat);
+        const lng = parseFloat(data[0].lon);
+        if (Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+          return { lat, lng };
+        }
+      }
+    }
+  } catch {
+    // Network or timeout failure — use graceful fallback
+  }
+
+  return fallback;
+}
+

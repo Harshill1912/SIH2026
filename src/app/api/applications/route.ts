@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireSession } from "@/lib/auth";
 import { formatSchedule } from "@/lib/schedule";
+import { resolvePremisesCoordinates } from "@/lib/address";
 
 export async function GET(request: Request) {
   const auth = await requireSession();
@@ -115,17 +116,16 @@ export async function POST(request: Request) {
       );
     }
 
-    // Every inspection is geofenced against the premises. Without a pin, an
-    // officer would travel to the site and still be unable to record it.
+    // Every inspection is geofenced against the premises. Ensure premises
+    // coordinates are established from the address.
     if (instrument.business.lat == null || instrument.business.lng == null) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Pin your premises location from the dashboard before applying for verification",
-          field: "location",
-        },
-        { status: 409 }
-      );
+      const coords = await resolvePremisesCoordinates(instrument.business.address);
+      await prisma.business.update({
+        where: { id: instrument.business.id },
+        data: { lat: coords.lat, lng: coords.lng },
+      });
+      instrument.business.lat = coords.lat;
+      instrument.business.lng = coords.lng;
     }
 
     // Check if there is already an active pending or assigned application

@@ -17,7 +17,6 @@ import {
   Phone,
 } from "lucide-react";
 import RegisterInstrumentModal from "./RegisterInstrumentModal";
-import PremisesPin from "./PremisesPin";
 import ExpiryAlerts from "@/components/alerts/ExpiryAlerts";
 import ScheduleChip from "@/components/ScheduleChip";
 import { useNow } from "@/hooks/useNow";
@@ -236,7 +235,6 @@ export default function BusinessDashboard() {
         }
       />
 
-      {business && business.lat == null && <PremisesPin onPinned={refresh} />}
 
       {applyMessage && (
         <Notice tone="good" icon={CheckCircle2}>

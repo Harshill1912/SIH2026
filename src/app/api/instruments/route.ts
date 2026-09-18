@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireSession } from "@/lib/auth";
 import { firstInstrumentError, normalizeSerial } from "@/lib/instrument-validation";
+import { resolvePremisesCoordinates } from "@/lib/address";
 
 export async function GET(request: Request) {
   const auth = await requireSession();
@@ -23,10 +24,21 @@ export async function GET(request: Request) {
 
     const business = await prisma.business.findUnique({
       where: { id: businessId },
-      select: { id: true, name: true, regNo: true, address: true, contact: true },
+      select: { id: true, name: true, regNo: true, address: true, contact: true, lat: true, lng: true },
     });
     if (!business) {
       return NextResponse.json({ success: false, error: "Business not found" }, { status: 404 });
+    }
+
+    // Ensure business coordinates are populated from the address
+    if (business.lat == null || business.lng == null) {
+      const coords = await resolvePremisesCoordinates(business.address);
+      await prisma.business.update({
+        where: { id: business.id },
+        data: { lat: coords.lat, lng: coords.lng },
+      });
+      business.lat = coords.lat;
+      business.lng = coords.lng;
     }
 
     const instruments = await prisma.instrument.findMany({
