@@ -1,14 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  assembleCapacity,
   capacityError,
   firstInstrumentError,
+  getCategoryUnits,
+  getDefaultUnit,
   instrumentDeletionError,
   instrumentErrors,
   locationError,
   modelError,
   normalizeSerial,
   serialNumberError,
+  splitCapacityString,
 } from "../src/lib/instrument-validation";
 
 test("valid instrument inputs pass validation", () => {
@@ -154,4 +158,53 @@ test("instrumentDeletionError: permits deletion when no active application, bloc
   assert.notEqual(assigned, null);
   assert.match(assigned!, /Cannot delete instrument while verification application \(APP-2026-002\) is in progress/);
 });
+
+test("capacity helpers: splits and assembles category-scoped units correctly", () => {
+  // Counter scale: 15 kg / 1 g
+  const counterSplit = splitCapacityString("15 kg / 1 g", "Electronic Counter Scale");
+  assert.equal(counterSplit.magnitude, "15");
+  assert.equal(counterSplit.unit, "kg / 1 g");
+  assert.equal(counterSplit.isCustom, false);
+
+  // Weighbridge: 60 Metric Tonnes
+  const wbSplit = splitCapacityString("60 Metric Tonnes", "Weighbridge (Heavy Vehicle)");
+  assert.equal(wbSplit.magnitude, "60");
+  assert.equal(wbSplit.unit, "Metric Tonnes");
+  assert.equal(wbSplit.isCustom, false);
+
+  // Fuel dispenser: 45 L/min
+  const fdSplit = splitCapacityString("45 L/min", "Fuel Dispenser (Petrol/Diesel)");
+  assert.equal(fdSplit.magnitude, "45");
+  assert.equal(fdSplit.unit, "L/min");
+  assert.equal(fdSplit.isCustom, false);
+
+  // Linear measure: 30 m
+  const lmSplit = splitCapacityString("30 m", "Commercial Length & Linear Measure");
+  assert.equal(lmSplit.magnitude, "30");
+  assert.equal(lmSplit.unit, "m");
+  assert.equal(lmSplit.isCustom, false);
+
+  // Custom unit detection
+  const customSplit = splitCapacityString("150 CustomSpecialUnits", "Electronic Counter Scale");
+  assert.equal(customSplit.magnitude, "150");
+  assert.equal(customSplit.unit, "CustomSpecialUnits");
+  assert.equal(customSplit.isCustom, true);
+
+  // Assembly
+  assert.equal(assembleCapacity("15", "kg / 1 g"), "15 kg / 1 g");
+  assert.equal(assembleCapacity("45", "L/min"), "45 L/min");
+  assert.equal(assembleCapacity("", "kg / 1 g"), "kg / 1 g");
+  assert.equal(assembleCapacity("", ""), "");
+
+  // Default unit
+  assert.equal(getDefaultUnit("Electronic Counter Scale"), "kg / 1 g");
+  assert.equal(getDefaultUnit("Fuel Dispenser (Petrol/Diesel)"), "L/min");
+  assert.equal(getDefaultUnit("Commercial Length & Linear Measure"), "m");
+
+  // Category units list
+  const counterUnits = getCategoryUnits("Electronic Counter Scale");
+  assert(counterUnits.some((u) => u.value === "kg / 1 g"));
+  assert(counterUnits.some((u) => u.value === "kg"));
+});
+
 

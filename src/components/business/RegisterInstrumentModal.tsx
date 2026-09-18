@@ -8,6 +8,12 @@ import {
   instrumentErrors,
   firstInstrumentError,
   type InstrumentField,
+  type InstrumentCategory,
+  CATEGORY_QUICK_CAPACITIES,
+  getCategoryUnits,
+  getDefaultUnit,
+  splitCapacityString,
+  assembleCapacity,
 } from "@/lib/instrument-validation";
 
 interface RegisterInstrumentModalProps {
@@ -70,6 +76,9 @@ export default function RegisterInstrumentModal({
   const [category, setCategory] = useState<string>(CATEGORIES[0]);
   const [model, setModel] = useState("");
   const [capacity, setCapacity] = useState("");
+  const [capacityMag, setCapacityMag] = useState("");
+  const [capacityUnit, setCapacityUnit] = useState(getDefaultUnit(CATEGORIES[0]));
+  const [isCustomCapacity, setIsCustomCapacity] = useState(false);
   const [location, setLocation] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -92,11 +101,27 @@ export default function RegisterInstrumentModal({
     }
   };
 
+  const handleCategoryChange = (newCat: string) => {
+    setCategory(newCat);
+    clearBad("category");
+    if (!isCustomCapacity) {
+      const newUnit = getDefaultUnit(newCat);
+      setCapacityUnit(newUnit);
+      if (capacityMag) {
+        setCapacity(assembleCapacity(capacityMag, newUnit));
+      }
+    }
+  };
+
   const applyPreset = (p: (typeof PRESETS)[number]) => {
     setCategory(p.category);
     setSerialNumber(`${p.serialPrefix}-${randomSuffix()}`);
     setModel(p.model);
+    const split = splitCapacityString(p.capacity, p.category);
     setCapacity(p.capacity);
+    setCapacityMag(split.magnitude);
+    setCapacityUnit(split.unit);
+    setIsCustomCapacity(split.isCustom);
     setLocation(p.location);
     setActivePreset(p.label);
     setError(null);
@@ -108,6 +133,9 @@ export default function RegisterInstrumentModal({
     setSerialNumber("");
     setModel("");
     setCapacity("");
+    setCapacityMag("");
+    setCapacityUnit(getDefaultUnit(CATEGORIES[0]));
+    setIsCustomCapacity(false);
     setLocation("");
     setActivePreset(null);
     setError(null);
@@ -243,10 +271,7 @@ export default function RegisterInstrumentModal({
             <select
               id="category"
               value={category}
-              onChange={(e) => {
-                setCategory(e.target.value);
-                clearBad("category");
-              }}
+              onChange={(e) => handleCategoryChange(e.target.value)}
               onBlur={blur("category")}
               className={fieldClass("category")}
             >
@@ -282,49 +307,151 @@ export default function RegisterInstrumentModal({
             <FieldError id="model-error" message={show("model")} />
           </div>
           <div>
-            <Label htmlFor="capacity" hint={capacityHint}>
-              Capacity
+            <Label htmlFor="location" hint="optional">
+              Location / counter
             </Label>
             <input
-              id="capacity"
+              id="location"
               type="text"
-              required
-              maxLength={50}
-              value={capacity}
+              maxLength={80}
+              value={location}
               onChange={(e) => {
-                setCapacity(e.target.value);
-                clearBad("capacity");
+                setLocation(e.target.value);
+                clearBad("location");
               }}
-              onBlur={blur("capacity")}
-              placeholder={isVolume ? "45 L/min" : isLength ? "30 m" : "50 kg / 1 g"}
-              className={fieldClass("capacity")}
-              aria-invalid={invalid("capacity") || undefined}
-              aria-describedby={show("capacity") ? "capacity-error" : undefined}
+              onBlur={blur("location")}
+              placeholder="Counter 2 – Retail billing"
+              className={fieldClass("location")}
+              aria-invalid={invalid("location") || undefined}
+              aria-describedby={show("location") ? "location-error" : undefined}
             />
-            <FieldError id="capacity-error" message={show("capacity")} />
+            <FieldError id="location-error" message={show("location")} />
           </div>
         </div>
 
-        <div>
-          <Label htmlFor="location" hint="optional">
-            Location / counter
-          </Label>
-          <input
-            id="location"
-            type="text"
-            maxLength={80}
-            value={location}
-            onChange={(e) => {
-              setLocation(e.target.value);
-              clearBad("location");
-            }}
-            onBlur={blur("location")}
-            placeholder="Counter 2 – Retail billing"
-            className={fieldClass("location")}
-            aria-invalid={invalid("location") || undefined}
-            aria-describedby={show("location") ? "location-error" : undefined}
-          />
-          <FieldError id="location-error" message={show("location")} />
+        {/* Capacity & Scale Interval */}
+        <div className="rounded-xl border border-line bg-ink-50/30 p-3.5 space-y-2.5">
+          <div className="flex items-center justify-between">
+            <Label htmlFor={isCustomCapacity ? "capacity" : "capacity-mag"} hint={capacityHint}>
+              Capacity & scale interval
+            </Label>
+            <button
+              type="button"
+              onClick={() => {
+                if (isCustomCapacity) {
+                  const split = splitCapacityString(capacity, category);
+                  setCapacityMag(split.magnitude);
+                  setCapacityUnit(split.isCustom ? getDefaultUnit(category) : split.unit);
+                  setIsCustomCapacity(false);
+                } else {
+                  setIsCustomCapacity(true);
+                }
+              }}
+              className="text-[11px] font-medium text-seal-700 hover:text-seal-900 underline underline-offset-2 transition"
+            >
+              {isCustomCapacity ? "Use standard unit selector" : "Custom syntax"}
+            </button>
+          </div>
+
+          {isCustomCapacity ? (
+            <div>
+              <input
+                id="capacity"
+                type="text"
+                required
+                maxLength={50}
+                value={capacity}
+                onChange={(e) => {
+                  setCapacity(e.target.value);
+                  clearBad("capacity");
+                }}
+                onBlur={blur("capacity")}
+                placeholder={isVolume ? "45 L/min" : isLength ? "30 m" : "15 kg / 1 g"}
+                className={fieldClass("capacity")}
+                aria-invalid={invalid("capacity") || undefined}
+                aria-describedby={show("capacity") ? "capacity-error" : undefined}
+              />
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-5">
+                <div className="sm:col-span-2">
+                  <input
+                    id="capacity-mag"
+                    type="number"
+                    step="any"
+                    min="0.001"
+                    required
+                    value={capacityMag}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setCapacityMag(val);
+                      setCapacity(assembleCapacity(val, capacityUnit));
+                      clearBad("capacity");
+                    }}
+                    onBlur={blur("capacity")}
+                    placeholder="e.g. 15"
+                    className={fieldClass("capacity")}
+                    aria-invalid={invalid("capacity") || undefined}
+                    aria-describedby={show("capacity") ? "capacity-error" : undefined}
+                  />
+                </div>
+                <div className="sm:col-span-3">
+                  <select
+                    id="capacity-unit"
+                    value={capacityUnit}
+                    onChange={(e) => {
+                      const u = e.target.value;
+                      setCapacityUnit(u);
+                      setCapacity(assembleCapacity(capacityMag, u));
+                      clearBad("capacity");
+                    }}
+                    onBlur={blur("capacity")}
+                    className={fieldClass("capacity")}
+                  >
+                    {getCategoryUnits(category).map((u) => (
+                      <option key={u.value} value={u.value}>
+                        {u.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Quick-select common capacity chips */}
+              {CATEGORY_QUICK_CAPACITIES[category as InstrumentCategory]?.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                  <span className="text-[11px] font-medium text-ink-400">Common:</span>
+                  {CATEGORY_QUICK_CAPACITIES[category as InstrumentCategory].map((chip) => {
+                    const active = capacity === chip;
+                    return (
+                      <button
+                        key={chip}
+                        type="button"
+                        onClick={() => {
+                          const split = splitCapacityString(chip, category);
+                          setCapacityMag(split.magnitude);
+                          setCapacityUnit(split.unit);
+                          setCapacity(chip);
+                          setIsCustomCapacity(false);
+                          clearBad("capacity");
+                        }}
+                        className={cx(
+                          "rounded-md border px-2 py-0.5 text-[11px] font-medium transition focus-ring",
+                          active
+                            ? "border-seal-400 bg-seal-50 text-seal-800 ring-1 ring-seal-200"
+                            : "border-line-strong bg-white text-ink-600 hover:border-ink-300 hover:bg-ink-50 hover:text-ink-900"
+                        )}
+                      >
+                        {chip}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+          <FieldError id="capacity-error" message={show("capacity")} />
         </div>
       </form>
     </Modal>

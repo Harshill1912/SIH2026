@@ -73,6 +73,110 @@ export function modelError(raw: string): string | null {
   return null;
 }
 
+export interface CapacityUnitOption {
+  value: string;
+  label: string;
+}
+
+export const CATEGORY_UNITS: Record<InstrumentCategory, CapacityUnitOption[]> = {
+  "Electronic Counter Scale": [
+    { value: "kg / 1 g", label: "kg / 1 g (Retail counter · e = 1 g)" },
+    { value: "kg / 2 g", label: "kg / 2 g (Retail counter · e = 2 g)" },
+    { value: "kg / 5 g", label: "kg / 5 g (Retail counter · e = 5 g)" },
+    { value: "kg", label: "kg (Kilograms)" },
+    { value: "g / 0.1 g", label: "g / 0.1 g (High precision · e = 0.1 g)" },
+    { value: "g / 1 g", label: "g / 1 g (Kitchen / lab · e = 1 g)" },
+    { value: "g", label: "g (Grams)" },
+    { value: "tonnes", label: "tonnes (Tonnes)" },
+  ],
+  "Platform Scale (Industrial)": [
+    { value: "kg / 10 g", label: "kg / 10 g (Platform · e = 10 g)" },
+    { value: "kg / 20 g", label: "kg / 20 g (Platform · e = 20 g)" },
+    { value: "kg / 50 g", label: "kg / 50 g (Industrial · e = 50 g)" },
+    { value: "kg", label: "kg (Kilograms)" },
+    { value: "tonnes / 10 kg", label: "tonnes / 10 kg (Heavy industrial)" },
+    { value: "Metric Tonnes", label: "Metric Tonnes" },
+  ],
+  "Weighbridge (Heavy Vehicle)": [
+    { value: "Metric Tonnes", label: "Metric Tonnes (Standard heavy vehicle)" },
+    { value: "tonnes / 10 kg", label: "tonnes / 10 kg (Class III · e = 10 kg)" },
+    { value: "tonnes / 20 kg", label: "tonnes / 20 kg (Class III · e = 20 kg)" },
+    { value: "tonnes", label: "tonnes (Tonnes)" },
+    { value: "kg", label: "kg (Kilograms)" },
+  ],
+  "Fuel Dispenser (Petrol/Diesel)": [
+    { value: "L/min", label: "L/min (Standard nozzle delivery)" },
+    { value: "litres/min", label: "litres/min (Flow rate)" },
+    { value: "L", label: "L (Fixed volume batch)" },
+    { value: "mL", label: "mL (Micro dispenser)" },
+  ],
+  "Automatic Gravimetric Filling": [
+    { value: "kg / 1 g", label: "kg / 1 g (Packaging scale · e = 1 g)" },
+    { value: "kg / 5 g", label: "kg / 5 g (Bulk packaging · e = 5 g)" },
+    { value: "kg", label: "kg (Kilograms)" },
+    { value: "g / 0.1 g", label: "g / 0.1 g (Precision chemical/pharma)" },
+    { value: "g", label: "g (Grams)" },
+  ],
+  "Commercial Length & Linear Measure": [
+    { value: "m", label: "m (Metres · cloth/wire)" },
+    { value: "cm", label: "cm (Centimetres)" },
+    { value: "mm", label: "mm (Millimetres)" },
+  ],
+};
+
+export const CATEGORY_QUICK_CAPACITIES: Record<InstrumentCategory, string[]> = {
+  "Electronic Counter Scale": ["15 kg / 1 g", "30 kg / 2 g", "50 kg / 5 g", "5 kg / 1 g"],
+  "Platform Scale (Industrial)": ["100 kg / 20 g", "300 kg / 50 g", "500 kg / 100 g", "1000 kg / 200 g"],
+  "Weighbridge (Heavy Vehicle)": ["40 Metric Tonnes", "50 Metric Tonnes", "60 Metric Tonnes", "80 Metric Tonnes", "100 Metric Tonnes"],
+  "Fuel Dispenser (Petrol/Diesel)": ["45 L/min", "50 L/min", "70 L/min", "50 L"],
+  "Automatic Gravimetric Filling": ["5 kg / 1 g", "25 kg / 5 g", "50 kg / 10 g"],
+  "Commercial Length & Linear Measure": ["1 m", "2 m", "5 m", "10 m", "30 m", "50 m"],
+};
+
+export function getCategoryUnits(category: string): CapacityUnitOption[] {
+  return CATEGORY_UNITS[category as InstrumentCategory] ?? CATEGORY_UNITS["Electronic Counter Scale"];
+}
+
+export function getDefaultUnit(category: string): string {
+  const units = getCategoryUnits(category);
+  return units[0]?.value ?? "kg";
+}
+
+export function splitCapacityString(
+  rawCapacity: string,
+  category: string
+): { magnitude: string; unit: string; isCustom: boolean } {
+  const trimmed = rawCapacity.trim();
+  if (!trimmed) {
+    return { magnitude: "", unit: getDefaultUnit(category), isCustom: false };
+  }
+
+  const match = /^\s*(\d+(?:\.\d+)?)\s*(.*)$/.exec(trimmed);
+  if (!match) {
+    return { magnitude: "", unit: trimmed, isCustom: true };
+  }
+
+  const magnitude = match[1];
+  const unit = match[2].trim();
+  const available = getCategoryUnits(category);
+  const found = available.some((u) => u.value.toLowerCase() === unit.toLowerCase());
+
+  return {
+    magnitude,
+    unit: found ? available.find((u) => u.value.toLowerCase() === unit.toLowerCase())!.value : unit,
+    isCustom: !found && Boolean(unit),
+  };
+}
+
+export function assembleCapacity(magnitude: string, unit: string): string {
+  const mag = magnitude.trim();
+  const u = unit.trim();
+  if (!mag && !u) return "";
+  if (!u) return mag;
+  if (!mag) return u;
+  return `${mag} ${u}`;
+}
+
 const MASS_UNIT_RE = /\b(metric\s*tonnes?|tonnes?|t|kg|g|mg)\b/i;
 const VOLUME_UNIT_RE = /\b(l\/min|litres?\/min|liters?\/min|l|ml|litres?|liters?)\b/i;
 const LENGTH_UNIT_RE = /\b(metres?|meters?|m|cm|mm)\b/i;
