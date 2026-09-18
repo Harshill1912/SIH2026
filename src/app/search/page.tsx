@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import SearchView from "@/components/search/SearchView";
 
-export const metadata = { title: "Search — e-Metrology" };
+export const metadata = { title: "Search" };
 
 export default async function SearchPage({
   searchParams,

@@ -1,7 +1,7 @@
 import LoginForm from "@/components/auth/LoginForm";
 import { getSession } from "@/lib/auth";
 
-export const metadata = { title: "Sign in — e-Metrology" };
+export const metadata = { title: "Sign in" };
 
 export default async function LoginPage({
   searchParams,

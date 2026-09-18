@@ -61,6 +61,19 @@ async function checkRevocation(certId: string | undefined) {
   }
 }
 
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ token: string }>;
+}) {
+  const { token } = await params;
+  const decoded = decodeURIComponent(token).trim();
+  const isJwt = decoded.split(".").length === 3;
+  return {
+    title: isJwt ? "Verify certificate" : `Verify ${decoded.slice(0, 30)}`,
+  };
+}
+
 export default async function VerifyPage({
   params,
 }: {
