@@ -9,7 +9,7 @@ import { distanceM } from "./geo";
  *
  * Configured with public env vars so the browser and the server always agree:
  *   NEXT_PUBLIC_GEOFENCE_RADIUS_M    how close is "on site"             (default 200)
- *   NEXT_PUBLIC_MAX_GPS_ACCURACY_M   worst GPS accuracy accepted        (default 100)
+ *   NEXT_PUBLIC_MAX_GPS_ACCURACY_M   worst GPS accuracy accepted        (default 300)
  *   NEXT_PUBLIC_DEMO_LOCATION=true   allow a manually chosen location, for laptop
  *                                    demos with no GPS. Off by default; never in production.
  *
@@ -24,7 +24,7 @@ const positive = (raw: string | undefined, fallback: number) => {
 };
 
 export const GEOFENCE_RADIUS_M = positive(process.env.NEXT_PUBLIC_GEOFENCE_RADIUS_M, 200);
-export const MAX_GPS_ACCURACY_M = positive(process.env.NEXT_PUBLIC_MAX_GPS_ACCURACY_M, 100);
+export const MAX_GPS_ACCURACY_M = positive(process.env.NEXT_PUBLIC_MAX_GPS_ACCURACY_M, 300);
 export const DEMO_LOCATION_ALLOWED = process.env.NEXT_PUBLIC_DEMO_LOCATION === "true";
 
 export type FixSource = "device" | "manual";

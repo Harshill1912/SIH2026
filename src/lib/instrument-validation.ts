@@ -155,3 +155,18 @@ export function firstInstrumentError(
   }
   return null;
 }
+
+/**
+ * An instrument cannot be deleted if it has an in-progress verification application.
+ */
+export function instrumentDeletionError(
+  activeApplications: Array<{ applicationNumber?: string; status: string }>
+): string | null {
+  const active = activeApplications.find((a) => ["SUBMITTED", "ASSIGNED"].includes(a.status));
+  if (active) {
+    const appNum = active.applicationNumber ? ` (${active.applicationNumber})` : "";
+    return `Cannot delete instrument while verification application${appNum} is in progress. Cancel or conclude the application first.`;
+  }
+  return null;
+}
+

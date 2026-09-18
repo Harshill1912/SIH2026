@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   capacityError,
   firstInstrumentError,
+  instrumentDeletionError,
   instrumentErrors,
   locationError,
   modelError,
@@ -127,3 +128,30 @@ test("firstInstrumentError returns the first failing field in form order", () =>
   };
   assert.equal(firstInstrumentError(badCapacity)?.field, "capacity");
 });
+
+test("instrumentDeletionError: permits deletion when no active application, blocks when in progress", () => {
+  // Free to delete when no applications or only past ones
+  assert.equal(instrumentDeletionError([]), null);
+  assert.equal(
+    instrumentDeletionError([{ applicationNumber: "APP-001", status: "INSPECTED" }]),
+    null
+  );
+  assert.equal(
+    instrumentDeletionError([{ applicationNumber: "APP-002", status: "REJECTED" }]),
+    null
+  );
+
+  // Blocked when application is SUBMITTED or ASSIGNED
+  const submitted = instrumentDeletionError([
+    { applicationNumber: "APP-2026-001", status: "SUBMITTED" },
+  ]);
+  assert.notEqual(submitted, null);
+  assert.match(submitted!, /Cannot delete instrument while verification application \(APP-2026-001\) is in progress/);
+
+  const assigned = instrumentDeletionError([
+    { applicationNumber: "APP-2026-002", status: "ASSIGNED" },
+  ]);
+  assert.notEqual(assigned, null);
+  assert.match(assigned!, /Cannot delete instrument while verification application \(APP-2026-002\) is in progress/);
+});
+

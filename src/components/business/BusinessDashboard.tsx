@@ -15,6 +15,7 @@ import {
   Search,
   MapPin,
   Phone,
+  Trash2,
 } from "lucide-react";
 import RegisterInstrumentModal from "./RegisterInstrumentModal";
 import ExpiryAlerts from "@/components/alerts/ExpiryAlerts";
@@ -28,6 +29,7 @@ import {
   EmptyState,
   IconButton,
   LoadingState,
+  Modal,
   Mono,
   Notice,
   PageHeader,
@@ -116,6 +118,9 @@ export default function BusinessDashboard() {
   const [applyingId, setApplyingId] = useState<string | null>(null);
   const [applyMessage, setApplyMessage] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [deletingInstrument, setDeletingInstrument] = useState<InstrumentRecord | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   /** Bumped after any change the alerts panel should reflect (e.g. a renewal). */
   const [alertsVersion, setAlertsVersion] = useState(0);
 
@@ -168,6 +173,31 @@ export default function BusinessDashboard() {
       alert("Error submitting application");
     } finally {
       setApplyingId(null);
+    }
+  };
+
+  const handleDeleteInstrument = async () => {
+    if (!deletingInstrument) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const res = await fetch(`/api/instruments?id=${encodeURIComponent(deletingInstrument.id)}`, {
+        method: "DELETE",
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setDeletingInstrument(null);
+        setApplyMessage(`Instrument ${deletingInstrument.serialNumber} removed from registry`);
+        setTimeout(() => setApplyMessage(null), 3500);
+        fetchInstruments();
+        setAlertsVersion((v) => v + 1);
+      } else {
+        setDeleteError(data.error || "Failed to delete instrument");
+      }
+    } catch {
+      setDeleteError("Network error while deleting instrument");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -376,6 +406,15 @@ export default function BusinessDashboard() {
                             Apply for verification
                           </Button>
                         )}
+                        <IconButton
+                          icon={Trash2}
+                          label="Delete instrument"
+                          onClick={() => {
+                            setDeletingInstrument(inst);
+                            setDeleteError(null);
+                          }}
+                          className="h-8 w-8 text-ink-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"
+                        />
                       </div>
                     </td>
                   </tr>
@@ -392,6 +431,79 @@ export default function BusinessDashboard() {
         onSuccess={fetchInstruments}
         businessLabel={business ? `${business.name} · ${business.regNo}` : undefined}
       />
+
+      {deletingInstrument && (
+        <Modal
+          open={Boolean(deletingInstrument)}
+          onClose={() => {
+            if (!deleting) {
+              setDeletingInstrument(null);
+              setDeleteError(null);
+            }
+          }}
+          tone="bad"
+          icon={Trash2}
+          title="Delete instrument"
+          subtitle={`Serial: ${deletingInstrument.serialNumber}`}
+          footer={
+            <>
+              <Button
+                variant="ghost"
+                type="button"
+                disabled={deleting}
+                onClick={() => {
+                  setDeletingInstrument(null);
+                  setDeleteError(null);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                type="button"
+                loading={deleting}
+                onClick={handleDeleteInstrument}
+              >
+                Delete instrument
+              </Button>
+            </>
+          }
+        >
+          <div className="space-y-4 p-6 text-sm text-ink-700">
+            <p>
+              Are you sure you want to remove this instrument from your registry? This action cannot be undone.
+            </p>
+            <div className="space-y-1.5 rounded-xl border border-line bg-ink-50/60 p-3.5 text-xs">
+              <div className="flex justify-between">
+                <span className="text-ink-500">Category:</span>
+                <span className="font-medium text-ink-900">{deletingInstrument.category}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-ink-500">Model:</span>
+                <span className="font-medium text-ink-900">{deletingInstrument.model}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-ink-500">Capacity:</span>
+                <span className="font-mono text-ink-900">{deletingInstrument.capacity}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-ink-500">Location:</span>
+                <span className="text-ink-900">{deletingInstrument.location || "Main counter"}</span>
+              </div>
+            </div>
+
+            {deleteError && (
+              <Notice tone="bad" icon={AlertTriangle}>
+                {deleteError}
+              </Notice>
+            )}
+
+            <p className="text-xs text-ink-400">
+              Note: Instruments with an active verification application in progress cannot be deleted.
+            </p>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

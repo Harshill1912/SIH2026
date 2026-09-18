@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireSession } from "@/lib/auth";
-import { firstInstrumentError, normalizeSerial } from "@/lib/instrument-validation";
+import {
+  firstInstrumentError,
+  instrumentDeletionError,
+  normalizeSerial,
+} from "@/lib/instrument-validation";
 import { resolvePremisesCoordinates } from "@/lib/address";
 
 export async function GET(request: Request) {
@@ -214,3 +218,69 @@ export async function POST(request: Request) {
     );
   }
 }
+
+export async function DELETE(request: Request) {
+  const auth = await requireSession();
+  if ("error" in auth) return auth.error;
+
+  if (auth.user.role !== "BUSINESS" && auth.user.role !== "ADMIN") {
+    return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 403 });
+  }
+
+  try {
+    const { searchParams } = new URL(request.url);
+    let id = searchParams.get("id");
+    if (!id) {
+      const body = await request.json().catch(() => ({}));
+      id = typeof body.id === "string" ? body.id : null;
+    }
+
+    if (!id) {
+      return NextResponse.json({ success: false, error: "Instrument ID is required" }, { status: 400 });
+    }
+
+    const instrument = await prisma.instrument.findUnique({
+      where: { id },
+      include: {
+        applications: {
+          where: { status: { in: ["SUBMITTED", "ASSIGNED"] } },
+          select: { id: true, applicationNumber: true, status: true },
+        },
+      },
+    });
+
+    if (!instrument) {
+      return NextResponse.json({ success: false, error: "Instrument not found" }, { status: 404 });
+    }
+
+    // Ownership check: Business can only delete their own instruments
+    if (auth.user.role === "BUSINESS" && instrument.businessId !== auth.user.businessId) {
+      return NextResponse.json(
+        { success: false, error: "You can only delete your own instruments" },
+        { status: 403 }
+      );
+    }
+
+    // Guard: Do not allow deletion if there is an active application in progress
+    const activeAppError = instrumentDeletionError(instrument.applications);
+    if (activeAppError) {
+      return NextResponse.json({ success: false, error: activeAppError }, { status: 409 });
+    }
+
+    await prisma.instrument.delete({
+      where: { id },
+    });
+
+    return NextResponse.json({
+      success: true,
+      message: `Instrument ${instrument.serialNumber} has been removed from registry`,
+    });
+  } catch (error) {
+    console.error("Failed to delete instrument:", error);
+    return NextResponse.json(
+      { success: false, error: "Failed to delete instrument" },
+      { status: 500 }
+    );
+  }
+}
+
