@@ -21,6 +21,7 @@ import {
   Printer,
   MapPin,
   MapPinOff,
+  Check,
 } from "lucide-react";
 import CertificateModal from "@/components/certificate/CertificateModal";
 import EvidenceModal, { type EvidenceInspection } from "@/components/admin/EvidenceModal";
@@ -28,6 +29,7 @@ import GeoCapture from "./GeoCapture";
 import PhotoCapture, { type PhotoValue } from "./PhotoCapture";
 import TestWeights, { EMPTY_DRAFT, draftToRecord, type TestDraft } from "./TestWeights";
 import { recordVerdict } from "@/lib/mpe";
+import { FAILURE_REASONS, formatFailureNote, parseFailureReasons } from "@/lib/inspection-failure";
 import { useRole } from "@/context/RoleContext";
 import { useNow } from "@/hooks/useNow";
 import ScheduleChip from "@/components/ScheduleChip";
@@ -170,6 +172,7 @@ export default function OfficerFieldView() {
   const [geo, setGeo] = useState<GeoFix | null>(null);
   const [photo, setPhoto] = useState<PhotoValue | null>(null);
   const [weights, setWeights] = useState<TestDraft>(EMPTY_DRAFT);
+  const [failureReasons, setFailureReasons] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [statusNotification, setStatusNotification] = useState<string | null>(null);
@@ -241,12 +244,13 @@ export default function OfficerFieldView() {
     const record = selectedCase
       ? draftToRecord(selectedCase.instrument.category, selectedCase.instrument.capacity, weights)
       : null;
+    const finalNotes = result === "FAIL" ? formatFailureNote(failureReasons, notes) : notes;
     return {
-    applicationId,
-    result,
-    notes,
-    testWeights: record && record.points.length > 0 ? JSON.stringify(record) : "",
-    mpeVerdict: recordVerdict(record),
+      applicationId,
+      result,
+      notes: finalNotes,
+      testWeights: record && record.points.length > 0 ? JSON.stringify(record) : "",
+      mpeVerdict: recordVerdict(record),
     photoAttached: Boolean(photo),
     photoData: photo?.dataUrl ?? null,
     photoName: photo?.name ?? null,
@@ -319,6 +323,7 @@ export default function OfficerFieldView() {
       setSelectedId(null);
       setPhoto(null);
       setWeights(EMPTY_DRAFT);
+      setFailureReasons([]);
       flash("Saved on this device. Go online and press Sync to upload.", 4000);
       return;
     }
@@ -332,6 +337,7 @@ export default function OfficerFieldView() {
         setSelectedId(null);
         setPhoto(null);
         setWeights(EMPTY_DRAFT);
+        setFailureReasons([]);
         fetchApplications();
       } else {
         alert(data.error || "Failed to record inspection");
@@ -581,6 +587,18 @@ export default function OfficerFieldView() {
                                   {insp.mpeVerdict === "PASS" ? "Within tolerance" : "MPE exceeded"}
                                 </span>
                               )}
+                              {!isPass && insp?.notes && (
+                                <div className="mt-1 max-w-[200px] flex flex-wrap gap-1">
+                                  {parseFailureReasons(insp.notes).reasons.map((r, i) => (
+                                    <span
+                                      key={i}
+                                      className="inline-block rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-medium text-rose-800 leading-tight"
+                                    >
+                                      {r}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           </td>
                           <td>
@@ -745,7 +763,10 @@ export default function OfficerFieldView() {
                     <div className="grid grid-cols-2 gap-3">
                       <button
                         type="button"
-                        onClick={() => setResult("PASS")}
+                        onClick={() => {
+                          setResult("PASS");
+                          if (!notes) setNotes("Standard calibration test performed with certified reference weights. Government verification seal affixed after test.");
+                        }}
                         aria-pressed={result === "PASS"}
                         className={cx(
                           "flex items-center gap-3 rounded-xl border p-4 text-left transition-all duration-150 focus-ring",
@@ -764,7 +785,10 @@ export default function OfficerFieldView() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => setResult("FAIL")}
+                        onClick={() => {
+                          setResult("FAIL");
+                          if (notes.startsWith("Standard calibration test")) setNotes("");
+                        }}
                         aria-pressed={result === "FAIL"}
                         className={cx(
                           "flex items-center gap-3 rounded-xl border p-4 text-left transition-all duration-150 focus-ring",
@@ -783,6 +807,61 @@ export default function OfficerFieldView() {
                       </button>
                     </div>
                   </div>
+
+                  {result === "FAIL" && (
+                    <div className="space-y-2.5 rounded-xl border border-rose-200 bg-rose-50/50 p-4">
+                      <div className="flex items-center justify-between">
+                        <span className="text-rose-950 font-semibold text-xs uppercase tracking-wider block">
+                          Rejection reasons (Select at least one)
+                        </span>
+
+                        {failureReasons.length > 0 && (
+                          <span className="text-xs font-semibold text-rose-800">
+                            {failureReasons.length} selected
+                          </span>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        {FAILURE_REASONS.map((r) => {
+                          const checked = failureReasons.includes(r.id);
+                          return (
+                            <button
+                              key={r.id}
+                              type="button"
+                              onClick={() => {
+                                setFailureReasons((prev) =>
+                                  checked ? prev.filter((id) => id !== r.id) : [...prev, r.id]
+                                );
+                              }}
+                              className={cx(
+                                "flex items-start gap-2.5 rounded-lg border p-2.5 text-left text-xs transition focus-ring",
+                                checked
+                                  ? "border-rose-600 bg-rose-100 text-rose-950 font-medium shadow-sm"
+                                  : "border-rose-200/80 bg-white text-ink-700 hover:border-rose-300 hover:bg-rose-50/70"
+                              )}
+                            >
+                              <span
+                                className={cx(
+                                  "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition",
+                                  checked
+                                    ? "border-rose-600 bg-rose-600 text-white"
+                                    : "border-ink-300 bg-white"
+                                )}
+                              >
+                                {checked && <Check className="h-3 w-3 stroke-[3]" />}
+                              </span>
+                              <span className="leading-tight">{r.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {failureReasons.length === 0 && (
+                        <p className="text-[12px] text-rose-700 font-medium">
+                          Select at least one standard failure reason before submitting the rejection.
+                        </p>
+                      )}
+                    </div>
+                  )}
 
                   <div>
                     <GeoCapture
@@ -841,34 +920,43 @@ export default function OfficerFieldView() {
                   </div>
 
                   <div>
-                    <Button
-                      type="submit"
-                      size="lg"
-                      variant={isOffline ? "warn" : result === "FAIL" ? "danger" : "primary"}
-                      icon={isOffline ? UploadCloud : FileCheck}
-                      loading={submitting}
-                      disabled={!photo || fence?.status !== "inside"}
-                      className="w-full"
-                    >
-                      {isOffline
-                        ? `Save offline · ${result}`
-                        : result === "PASS"
-                          ? "Submit & issue signed certificate"
-                          : "Submit failed inspection"}
-                    </Button>
-                    {(!photo || fence?.status !== "inside") && (
-                      <p className="mt-2 text-center text-xs text-ink-500">
-                        {!geo
-                          ? "Capture your location to continue."
-                          : fence?.status === "outside"
-                            ? `Blocked: you must be within ${formatDistance(fence.radiusM)} of the premises.`
-                            : fence?.status === "no-premises"
-                              ? "Blocked until the business pins its premises location."
-                              : fence?.status === "bad-fix"
-                                ? "Re-capture your location to continue."
-                                : "Take a photo of the lead seal to continue."}
-                      </p>
-                    )}
+                    {(() => {
+                      const failIncomplete = result === "FAIL" && failureReasons.length === 0;
+                      return (
+                        <>
+                          <Button
+                            type="submit"
+                            size="lg"
+                            variant={isOffline ? "warn" : result === "FAIL" ? "danger" : "primary"}
+                            icon={isOffline ? UploadCloud : FileCheck}
+                            loading={submitting}
+                            disabled={!photo || fence?.status !== "inside" || failIncomplete}
+                            className="w-full"
+                          >
+                            {isOffline
+                              ? `Save offline · ${result}`
+                              : result === "PASS"
+                                ? "Submit & issue signed certificate"
+                                : "Submit failed inspection"}
+                          </Button>
+                          {(!photo || fence?.status !== "inside" || failIncomplete) && (
+                            <p className="mt-2 text-center text-xs text-ink-500">
+                              {failIncomplete
+                                ? "Select at least one rejection reason to continue."
+                                : !geo
+                                  ? "Capture your location to continue."
+                                  : fence?.status === "outside"
+                                    ? `Blocked: you must be within ${formatDistance(fence.radiusM)} of the premises.`
+                                    : fence?.status === "no-premises"
+                                      ? "Blocked until the business pins its premises location."
+                                      : fence?.status === "bad-fix"
+                                        ? "Re-capture your location to continue."
+                                        : "Take a photo of the lead seal to continue."}
+                            </p>
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
               </form>
